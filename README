@@ -1,0 +1,4 @@
+Firmware for POV project.
+Requires arm-none-eabi GCC/toolchain and TI headers.
+
+License: GPL, v2 or later.
