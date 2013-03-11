@@ -14,9 +14,10 @@
 
 int main()
 {
-  ROM_SysCtlClockSet(SYSCTL_SYSDIV_4|SYSCTL_USE_PLL|SYSCTL_XTAL_16MHZ|SYSCTL_OSC_MAIN);
-//  ROM_SysCtlClockSet(SYSCTL_SYSDIV_1 | SYSCTL_USE_OSC | SYSCTL_OSC_MAIN |
-//                 SYSCTL_XTAL_16MHZ);
+  /* Use the full 80MHz system clock. */
+  ROM_SysCtlClockSet(SYSCTL_SYSDIV_2_5 | SYSCTL_USE_PLL |
+                     SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
+
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
   ROM_GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, LED_RED|LED_BLUE|LED_GREEN);
 
