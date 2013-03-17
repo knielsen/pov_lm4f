@@ -24,8 +24,12 @@ setup_pwm_GSCLK(void)
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
   /* Configure PB5 to be I/O pin for timer 1 B. */
   ROM_GPIOPinConfigure(GPIO_PB5_T1CCP1);
-  /* Configure PB5 (output etc. (?)) */
+  /*
+    Configure PB5: direction controlled by hardware, 2mA drive strength,
+    normal drive (no pullup).
+  */
   ROM_GPIOPinTypeTimer(GPIO_PORTB_BASE, GPIO_PIN_5);
+  /* Configure 2 * 16-bit timer in PWM mode. */
   ROM_TimerConfigure(TIMER1_BASE, TIMER_CFG_16_BIT_PAIR | TIMER_CFG_B_PWM);
   /*
     Set timer1B start and compare values.
