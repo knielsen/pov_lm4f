@@ -1,3 +1,5 @@
+#include <inttypes.h>
+
 #include "inc/hw_gpio.h"
 #include "inc/hw_memmap.h"
 #include "inc/hw_sysctl.h"
@@ -8,11 +10,39 @@
 #include "driverlib/sysctl.h"
 #include "driverlib/uart.h"
 #include "driverlib/timer.h"
+#include "driverlib/ssi.h"
 
+/*
+  Current pinouts:
+
+  PB5  GSCLK (20MHz)
+  PA2  SCLK
+  PA4  SOUT
+  PA5  SIN
+
+  PA6  XLAT
+  PA7  MODE
+*/
 
 #define LED_RED GPIO_PIN_1
 #define LED_BLUE GPIO_PIN_2
 #define LED_GREEN GPIO_PIN_3
+
+
+static void
+serial_output_hexdig(uint32_t dig)
+{
+  ROM_UARTCharPut(UART0_BASE, (dig >= 10 ? 'A' - 10 + dig : '0' + dig));
+}
+
+
+static void
+serial_output_hexbyte(uint8_t byte)
+{
+  serial_output_hexdig(byte >> 4);
+  serial_output_hexdig(byte & 0xf);
+}
+
 
 /* Configure Timer1B to output a PWM signal for GSCLK. */
 static void
@@ -39,6 +69,67 @@ setup_pwm_GSCLK(void)
   ROM_TimerMatchSet(TIMER1_BASE, TIMER_B, 1);
   /* Start the timer. */
   ROM_TimerEnable(TIMER1_BASE, TIMER_B);
+}
+
+
+/*
+  Read out TLC5940 status register through SSI0.
+*/
+static void
+read_from_tlc(void)
+{
+  uint32_t data;
+  uint32_t i;
+
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_SSI0);
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
+  ROM_GPIOPinConfigure(GPIO_PA2_SSI0CLK);
+  ROM_GPIOPinConfigure(GPIO_PA3_SSI0FSS);
+  ROM_GPIOPinConfigure(GPIO_PA4_SSI0RX);
+  ROM_GPIOPinConfigure(GPIO_PA5_SSI0TX);
+  ROM_GPIOPinTypeSSI(GPIO_PORTA_BASE, GPIO_PIN_5 | GPIO_PIN_4 | GPIO_PIN_3 |
+                     GPIO_PIN_2);
+
+  /*
+    Configure the SPI for correct mode to work with TLC5940.
+
+    We need CLK inactive low, so SPO=0.
+    We need to sample on the trailing, falling CLK edge, so SPH=1.
+  */
+
+  ROM_SSIConfigSetExpClk(SSI0_BASE, ROM_SysCtlClockGet(), SSI_FRF_MOTO_MODE_1,
+                     SSI_MODE_MASTER, 1000000, 8);
+
+  ROM_SSIEnable(SSI0_BASE);
+
+  /* Setup PA6 and PA7 for XLAT and MODE. */
+  ROM_GPIOPinTypeGPIOOutput(GPIO_PORTA_BASE, GPIO_PIN_6 | GPIO_PIN_7);
+  /* Set XLAT low. */
+  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, 0);
+  /* Set MODE low, to select GS mode. */
+  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_7, 0);
+
+  /* Empty the receive FIFO. */
+  while(ROM_SSIDataGetNonBlocking(SSI0_BASE, &data))
+    ;
+
+  /* Pulse XLAT so we get the status register loaded into the shift register. */
+  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, GPIO_PIN_6);
+  ROM_SysCtlDelay(5);
+  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, 0);
+
+  ROM_UARTCharPut(UART0_BASE, '\n');
+  ROM_UARTCharPut(UART0_BASE, '?');
+  for (i = 0; i < 192*6/8; ++i)
+  {
+    ROM_SSIDataPut(SSI0_BASE, 0xc3);
+    while (ROM_SSIBusy(SSI0_BASE))
+      ;
+    ROM_SSIDataGet(SSI0_BASE, &data);
+    serial_output_hexbyte(data);
+  }
+  ROM_UARTCharPut(UART0_BASE, '!');
+  ROM_UARTCharPut(UART0_BASE, '\n');
 }
 
 
@@ -71,6 +162,7 @@ int main()
     ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE, 0);
     ROM_SysCtlDelay(5000000+5000000-5000);
 
-    ROM_UARTCharPut(UART0_BASE, '!');
+    //ROM_UARTCharPut(UART0_BASE, '!');
+    read_from_tlc();
   }
 }
