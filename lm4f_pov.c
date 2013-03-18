@@ -13,6 +13,8 @@
 #include "driverlib/ssi.h"
 
 #define DC_VALUE 2
+#define NUM_TLC 6
+#define LEDS_PER_TLC 16
 
 /*
   Current pinouts:
@@ -157,7 +159,7 @@ init_tlc_dc(uint8_t dc_value)
   ROM_SysCtlDelay(5);
 
   /* Write DC value (6 bits) to all 16 outputs and all 6 TLCs. */
-  for (i = 0; i < 96*6/6; ++i)
+  for (i = 0; i < LEDS_PER_TLC * NUM_TLC; ++i)
   {
     ROM_SSIDataPut(SSI0_BASE, dc_value);
     while (ROM_SSIBusy(SSI0_BASE))
@@ -191,7 +193,7 @@ init_tlc_dc(uint8_t dc_value)
 
   bits_collected = 0;
   value = 0;
-  for (i = 0; i < 192*6/8; ++i)
+  for (i = 0; i < 12*LEDS_PER_TLC*NUM_TLC/8; ++i)
   {
     uint32_t j;
 
@@ -200,12 +202,12 @@ init_tlc_dc(uint8_t dc_value)
       ;
     ROM_SSIDataGet(SSI0_BASE, &data);
     serial_output_hexbyte(data);
-    if ((i % (192/8)) == 2 || (i % (192/8)) == 14)
+    if ((i % (12*LEDS_PER_TLC/8)) == 2 || (i % (12*LEDS_PER_TLC/8)) == 14)
       ROM_UARTCharPut(UART0_BASE, ' ');
-    else if ((i % (192/8)) == 23)
+    else if ((i % (12*LEDS_PER_TLC/8)) == 23)
       ROM_UARTCharPut(UART0_BASE, '\n');
 
-    if ((i % (192/8)) < 3 || (i % (192/8)) >= 15)
+    if ((i % (12*LEDS_PER_TLC/8)) < 3 || (i % (12*LEDS_PER_TLC/8)) >= 15)
       continue;
     /* This is one of the DC values, pick out the 6-bit values one-by-one. */
     for (j = 0; j < 8; ++j)
