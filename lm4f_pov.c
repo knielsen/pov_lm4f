@@ -74,17 +74,9 @@ setup_pwm_GSCLK(void)
 }
 
 
-/*
-  Read out TLC5940 status register through SSI0.
-*/
 static void
-read_from_tlc(uint8_t dc_value)
+config_tlc_gpio(void)
 {
-  uint32_t data;
-  uint32_t i;
-  uint32_t value;
-  uint32_t bits_collected;
-
   /* Setup GPIO pins for SSI0. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_SSI0);
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
@@ -101,8 +93,34 @@ read_from_tlc(uint8_t dc_value)
   ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, 0);
   /* Set MODE low, to select GS mode. */
   ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_7, 0);
+}
 
 
+static void
+config_spi_tlc_read(uint32_t bits_per_word)
+{
+  /*
+    Configure the SPI for correct mode to read from TLC5940.
+
+    We need CLK inactive low, so SPO=0.
+    We need to sample on the trailing, falling CLK edge, so SPH=1.
+
+    (We could try to use SPH=0 also for reading. Then we will sample on rising
+    edge, while TLC does setup on the same edge. The datasheet says setup time
+    is MAX 30 ns, there is no min. So depending on the actual setup time,
+    there may be time to read the old value before the new one is setup, or
+    there may not.)
+  */
+
+  ROM_SSIDisable(SSI0_BASE);
+  ROM_SSIConfigSetExpClk(SSI0_BASE, ROM_SysCtlClockGet(), SSI_FRF_MOTO_MODE_1,
+                     SSI_MODE_MASTER, 20000000, bits_per_word);
+  ROM_SSIEnable(SSI0_BASE);
+}
+
+static void
+config_spi_tlc_write(uint32_t bits_per_word)
+{
   /*
     Configure the SPI for correct mode to write to TLC5940, and send
     DC data.
@@ -113,8 +131,26 @@ read_from_tlc(uint8_t dc_value)
 
   ROM_SSIDisable(SSI0_BASE);
   ROM_SSIConfigSetExpClk(SSI0_BASE, ROM_SysCtlClockGet(), SSI_FRF_MOTO_MODE_0,
-                     SSI_MODE_MASTER, 20000000, 6);
+                         SSI_MODE_MASTER, 20000000, bits_per_word);
   ROM_SSIEnable(SSI0_BASE);
+}
+
+/*
+  Set the DC register on TLC5940 through SSI0.
+  Then read out the TLC5940 status register and check that DC is correct.
+*/
+static void
+init_tlc_dc(uint8_t dc_value)
+{
+  uint32_t data;
+  uint32_t i;
+  uint32_t value;
+  uint32_t bits_collected;
+
+  config_tlc_gpio();
+
+  /* Prepare to write 6-bit DC words to TLC. */
+  config_spi_tlc_write(6);
 
   /* Set MODE high, to select DC mode. */
   ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_7, GPIO_PIN_7);
@@ -137,23 +173,7 @@ read_from_tlc(uint8_t dc_value)
   ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, 0);
   ROM_SysCtlDelay(5);
 
-  /*
-    Configure the SPI for correct mode to read from TLC5940.
-
-    We need CLK inactive low, so SPO=0.
-    We need to sample on the trailing, falling CLK edge, so SPH=1.
-
-    (We could try to use SPH=0 also for reading. Then we will sample on rising
-    edge, while TLC does setup on the same edge. The datasheet says setup time
-    is MAX 30 ns, there is no min. So depending on the actual setup time,
-    there may be time to read the old value before the new one is setup, or
-    there may not.)
-  */
-
-  //ROM_SSIDisable(SSI0_BASE);
-  ROM_SSIConfigSetExpClk(SSI0_BASE, ROM_SysCtlClockGet(), SSI_FRF_MOTO_MODE_1,
-                     SSI_MODE_MASTER, 20000000, 8);
-  ROM_SSIEnable(SSI0_BASE);
+  config_spi_tlc_read(8);
 
   /* Set MODE low, to select GS mode. */
   ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_7, 0);
@@ -217,6 +237,9 @@ read_from_tlc(uint8_t dc_value)
   }
   ROM_UARTCharPut(UART0_BASE, '!');
   ROM_UARTCharPut(UART0_BASE, '\n');
+
+  /* Leave the SPI in GS write mode. */
+  config_spi_tlc_write(8);
 }
 
 
@@ -250,6 +273,6 @@ int main()
     ROM_SysCtlDelay(5000000+5000000-5000);
 
     //ROM_UARTCharPut(UART0_BASE, '!');
-    read_from_tlc(DC_VALUE);
+    init_tlc_dc(DC_VALUE);
   }
 }
