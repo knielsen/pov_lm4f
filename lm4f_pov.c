@@ -12,7 +12,7 @@
 #include "driverlib/timer.h"
 #include "driverlib/ssi.h"
 
-#define DC_VALUE 3
+#define DC_VALUE 2
 
 /*
   Current pinouts:
@@ -82,6 +82,8 @@ read_from_tlc(uint8_t dc_value)
 {
   uint32_t data;
   uint32_t i;
+  uint32_t value;
+  uint32_t bits_collected;
 
   /* Setup GPIO pins for SSI0. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_SSI0);
@@ -111,7 +113,7 @@ read_from_tlc(uint8_t dc_value)
 
   ROM_SSIDisable(SSI0_BASE);
   ROM_SSIConfigSetExpClk(SSI0_BASE, ROM_SysCtlClockGet(), SSI_FRF_MOTO_MODE_0,
-                     SSI_MODE_MASTER, 1000000, 6);
+                     SSI_MODE_MASTER, 20000000, 6);
   ROM_SSIEnable(SSI0_BASE);
 
   /* Set MODE high, to select DC mode. */
@@ -150,7 +152,7 @@ read_from_tlc(uint8_t dc_value)
 
   //ROM_SSIDisable(SSI0_BASE);
   ROM_SSIConfigSetExpClk(SSI0_BASE, ROM_SysCtlClockGet(), SSI_FRF_MOTO_MODE_1,
-                     SSI_MODE_MASTER, 1000000, 8);
+                     SSI_MODE_MASTER, 20000000, 8);
   ROM_SSIEnable(SSI0_BASE);
 
   /* Set MODE low, to select GS mode. */
@@ -167,15 +169,51 @@ read_from_tlc(uint8_t dc_value)
   ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, 0);
   ROM_SysCtlDelay(5);
 
-  ROM_UARTCharPut(UART0_BASE, '\n');
-  ROM_UARTCharPut(UART0_BASE, '?');
+  bits_collected = 0;
+  value = 0;
   for (i = 0; i < 192*6/8; ++i)
   {
+    uint32_t j;
+
     ROM_SSIDataPut(SSI0_BASE, 0);
     while (ROM_SSIBusy(SSI0_BASE))
       ;
     ROM_SSIDataGet(SSI0_BASE, &data);
     serial_output_hexbyte(data);
+    if ((i % (192/8)) == 2 || (i % (192/8)) == 14)
+      ROM_UARTCharPut(UART0_BASE, ' ');
+    else if ((i % (192/8)) == 23)
+      ROM_UARTCharPut(UART0_BASE, '\n');
+
+    if ((i % (192/8)) < 3 || (i % (192/8)) >= 15)
+      continue;
+    /* This is one of the DC values, pick out the 6-bit values one-by-one. */
+    for (j = 0; j < 8; ++j)
+    {
+      value = (value << 1) | ((data >> (7-j)) & 1);
+      ++bits_collected;
+      if (bits_collected == 6)
+      {
+        /* Check if the received DC value is correct, halt if not. */
+        if (value != DC_VALUE)
+        {
+          ROM_UARTCharPut(UART0_BASE, '#');
+          serial_output_hexbyte(value);
+          ROM_UARTCharPut(UART0_BASE, '#');
+          ROM_UARTCharPut(UART0_BASE, '\n');
+          /* Flash the red LED endlessly to complain. */
+          for (;;)
+          {
+            ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE, LED_RED);
+            ROM_SysCtlDelay(40000000/3);
+            ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE, 0);
+            ROM_SysCtlDelay(40000000/3);
+          }
+        }
+        value = 0;
+        bits_collected = 0;
+      }
+    }
   }
   ROM_UARTCharPut(UART0_BASE, '!');
   ROM_UARTCharPut(UART0_BASE, '\n');
