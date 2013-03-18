@@ -18,7 +18,7 @@ all: $(TARGET).bin
 
 $(TARGET).bin: $(TARGET).elf
 
-$(TARGET).elf: $(TARGET).bin $(STARTUP).o $(LINKSCRIPT)
+$(TARGET).elf: $(TARGET).o $(STARTUP).o $(LINKSCRIPT)
 
 $(TARGET).o: $(TARGET).c
 
