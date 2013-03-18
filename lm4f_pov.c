@@ -15,6 +15,9 @@
 #define DC_VALUE 2
 #define NUM_TLC 6
 #define LEDS_PER_TLC 16
+#define TLC_GS_BYTES (12 * LEDS_PER_TLC * NUM_TLC / 8)
+#define NUM_RGB_LEDS (NUM_TLC*LEDS_PER_TLC/3)
+
 
 /*
   Current pinouts:
@@ -26,6 +29,7 @@
 
   PA6  XLAT
   PA7  MODE
+  PB4  BLANK
 */
 
 #define LED_RED GPIO_PIN_1
@@ -95,6 +99,11 @@ config_tlc_gpio(void)
   ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, 0);
   /* Set MODE low, to select GS mode. */
   ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_7, 0);
+
+  /* Setup PB4 for BLANK, pull it high initially. */
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
+  ROM_GPIOPinTypeGPIOOutput(GPIO_PORTB_BASE, GPIO_PIN_4);
+  ROM_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_4, GPIO_PIN_4);
 }
 
 
@@ -245,8 +254,93 @@ init_tlc_dc(uint8_t dc_value)
 }
 
 
+/*
+  Shift out an array of 12-bit grayscale data to the TLCs.
+
+  Assumes that GPIO and SSI has already been configured and that
+  VPRG (MODE) is already low to select GS mode.
+*/
+static void
+shift_out_gs_to_tlc(uint8_t *gs_data)
+{
+  uint32_t data;
+  uint32_t i;
+
+  /* Write 12 bits of GS data to all 16 outputs on all 6 TLCs. */
+  for (i = 0; i < TLC_GS_BYTES; ++i)
+  {
+    ROM_SSIDataPut(SSI0_BASE, gs_data[i]);
+    while (ROM_SSIBusy(SSI0_BASE))
+      ;
+    /* Drain the receive FIFO just so it does not get full. */
+    ROM_SSIDataGet(SSI0_BASE, &data);
+  }
+}
+
+static void
+display_led_data(uint8_t *gs_data)
+{
+  shift_out_gs_to_tlc(gs_data);
+
+  /* Pulse XLAT while holding BLANK high to latch new GS data. */
+  ROM_SysCtlDelay(1);
+  ROM_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_4, GPIO_PIN_4);
+  ROM_SysCtlDelay(1);
+  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, GPIO_PIN_6);
+  ROM_SysCtlDelay(1);
+  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, 0);
+  ROM_SysCtlDelay(1);
+  ROM_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_4, 0);
+  ROM_SysCtlDelay(1);
+}
+
+
+static void
+set_led(uint8_t *buf, uint32_t idx, uint32_t red, uint32_t green, uint32_t blue)
+{
+  uint8_t *entry;
+
+  /*
+    On the first TLC, OUT0 is green, OUT1 is red, OUT2 is blue.
+
+    Since data is shifted out last-to-first, the first entry in the buffer is
+    the last blue LED, and the last entry is the first green LED.
+  */
+
+  idx = ((NUM_RGB_LEDS-1) - idx);
+  entry = buf + (idx*9)/2;
+  if (idx & 1)
+  {
+    entry[4] = green & 0xff;
+    entry[3] = (green >> 8) | ((red & 0xf) << 4);
+    entry[2] = red >> 4;
+    entry[1] = blue & 0xff;
+    entry[0] = (entry[0] & 0xf0) | (blue >> 8);
+  }
+  else
+  {
+    entry[4] = (entry[4] & 0xf) | ((green & 0xf) << 4);
+    entry[3] = green >> 4;
+    entry[2] = red & 0xff;
+    entry[1] = (red >> 8) | ((blue & 0xf) << 4);
+    entry[0] = blue >> 4;
+  }
+}
+
+
+static void
+gs_clear(uint8_t *buf)
+{
+  //memset(buf, 0, TLC_GS_BYTES);
+  for (uint32_t i = 0; i < TLC_GS_BYTES; ++i)
+    buf[i] = 0;
+}
+
+
 int main()
 {
+  uint32_t count;
+
   /* Use the full 80MHz system clock. */
   ROM_SysCtlClockSet(SYSCTL_SYSDIV_2_5 | SYSCTL_USE_PLL |
                      SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
@@ -267,14 +361,35 @@ int main()
                       (UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE |
                        UART_CONFIG_PAR_NONE));
 
+  init_tlc_dc(DC_VALUE);
+
+  count = 0;
   for (;;) {
-    // set the red LED pin high, others low
+    uint8_t buf[TLC_GS_BYTES];
+
+    /* Try display a bit of animation. */
+    gs_clear(buf);
+    switch ((count/50/NUM_RGB_LEDS)%3)
+    {
+    case 0:
+      set_led(buf, ((count/50) % NUM_RGB_LEDS), 4095, 0, 0);
+      break;
+    case 1:
+      set_led(buf, ((count/50) % NUM_RGB_LEDS), 0, 4095, 0);
+      break;
+    case 2:
+      set_led(buf, ((count/50) % NUM_RGB_LEDS), 0, 0, 4095);
+      break;
+    }
+    ++count;
+    display_led_data(buf);
+
+    /* Flash the LED a bit. */
     ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE, LED_RED|LED_GREEN);
-    ROM_SysCtlDelay(5000);
+    ROM_SysCtlDelay(50);
     ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE, 0);
-    ROM_SysCtlDelay(5000000+5000000-5000);
+    ROM_SysCtlDelay(50000+50000-500);
 
     //ROM_UARTCharPut(UART0_BASE, '!');
-    init_tlc_dc(DC_VALUE);
   }
 }
