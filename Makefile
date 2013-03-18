@@ -39,4 +39,10 @@ flash:
 clean:
 	rm -f $(TARGET).o $(TARGET).elf $(TARGET).bin $(STARTUP).o
 
-.PHONY: all clean flash
+tty:
+	stty -F/dev/ttyACM0 raw -echo -hup cs8 -parenb -cstopb 115200
+
+cat:
+	cat /dev/ttyACM0
+
+.PHONY: all clean flash tty cat
