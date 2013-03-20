@@ -337,6 +337,49 @@ gs_clear(uint8_t *buf)
 }
 
 
+ __attribute__ ((unused))
+static void
+anim1(uint8_t *buf, uint32_t count)
+{
+  gs_clear(buf);
+  switch ((count/50/NUM_RGB_LEDS)%3)
+  {
+  case 0:
+    set_led(buf, ((count/50) % NUM_RGB_LEDS), 4095, 0, 0);
+    break;
+  case 1:
+    set_led(buf, ((count/50) % NUM_RGB_LEDS), 0, 4095, 0);
+    break;
+  case 2:
+    set_led(buf, ((count/50) % NUM_RGB_LEDS), 0, 0, 4095);
+    break;
+  }
+}
+
+ __attribute__ ((unused))
+static void
+anim2(uint8_t *buf, uint32_t count)
+{
+  uint32_t i;
+  gs_clear(buf);
+
+  for (i = 0; i < 32; ++i)
+  {
+    uint32_t v = (i + (count/15)) % 48;
+    if (v < 16)
+      set_led(buf, i, 4095, 4095*(15-v)/15, 0);
+    else if (v < 24)
+      set_led(buf, i, 4095, 0, 4095*(v-16)/7);
+    else if (v < 32)
+      set_led(buf, i, 4095*(7-(v-24))/7, 0, 4095);
+    else if (v < 40)
+      set_led(buf, i, 0, 4095*(v-32)/7, 4095*(7-(v-32))/7);
+    else
+      set_led(buf, i, 4095*(v-40)/7, 4095, 0);
+  }
+}
+
+
 int main()
 {
   uint32_t count;
@@ -368,19 +411,9 @@ int main()
     uint8_t buf[TLC_GS_BYTES];
 
     /* Try display a bit of animation. */
-    gs_clear(buf);
-    switch ((count/50/NUM_RGB_LEDS)%3)
-    {
-    case 0:
-      set_led(buf, ((count/50) % NUM_RGB_LEDS), 4095, 0, 0);
-      break;
-    case 1:
-      set_led(buf, ((count/50) % NUM_RGB_LEDS), 0, 4095, 0);
-      break;
-    case 2:
-      set_led(buf, ((count/50) % NUM_RGB_LEDS), 0, 0, 4095);
-      break;
-    }
+    //anim1(buf, count);
+    anim2(buf, count);
+
     ++count;
     display_led_data(buf);
 
