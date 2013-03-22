@@ -13,7 +13,7 @@
 #include "driverlib/timer.h"
 #include "driverlib/ssi.h"
 
-#define DC_VALUE 1
+#define DC_VALUE 2
 #define NUM_TLC 6
 #define LEDS_PER_TLC 16
 #define TLC_GS_BYTES (12 * LEDS_PER_TLC * NUM_TLC / 8)
@@ -356,16 +356,16 @@ static void
 anim1(uint8_t *buf, uint32_t count)
 {
   gs_clear(buf);
-  switch ((count/50/NUM_RGB_LEDS)%3)
+  switch ((count/450/NUM_RGB_LEDS)%3)
   {
   case 0:
-    set_led(buf, ((count/50) % NUM_RGB_LEDS), 4095, 0, 0);
+    set_led(buf, ((count/450) % NUM_RGB_LEDS), 4095, 0, 0);
     break;
   case 1:
-    set_led(buf, ((count/50) % NUM_RGB_LEDS), 0, 4095, 0);
+    set_led(buf, ((count/450) % NUM_RGB_LEDS), 0, 4095, 0);
     break;
   case 2:
-    set_led(buf, ((count/50) % NUM_RGB_LEDS), 0, 0, 4095);
+    set_led(buf, ((count/450) % NUM_RGB_LEDS), 0, 0, 4095);
     break;
   }
 }
