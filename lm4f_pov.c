@@ -380,16 +380,18 @@ anim2(uint8_t *buf, uint32_t count)
   for (i = 0; i < 32; ++i)
   {
     uint32_t v = (i + (count/70)) % 48;
-    if (v < 16)
-      set_led(buf, i, 4095, 4095*(15-v)/15, 0);
+    if (v < 8)
+      set_led(buf, i,              4095,           4095*v/8,                 0);
+    else if (v < 16)
+      set_led(buf, i, 4095-4095*(v-8)/8,               4095,                 0);
     else if (v < 24)
-      set_led(buf, i, 4095, 0, 4095*(v-16)/7);
+      set_led(buf, i,                 0,               4095,     4095*(v-16)/8);
     else if (v < 32)
-      set_led(buf, i, 4095*(7-(v-24))/7, 0, 4095);
+      set_led(buf, i,                 0, 4095-4095*(v-24)/8,              4095);
     else if (v < 40)
-      set_led(buf, i, 0, 4095*(v-32)/7, 4095*(7-(v-32))/7);
+      set_led(buf, i,     4095*(v-32)/8,                  0,              4095);
     else
-      set_led(buf, i, 4095*(v-40)/7, 4095, 0);
+      set_led(buf, i,              4095,                  0,4095-4095*(v-40)/8);
   }
 }
 
