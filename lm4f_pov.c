@@ -4,6 +4,7 @@
 #include "inc/hw_memmap.h"
 #include "inc/hw_sysctl.h"
 #include "inc/hw_types.h"
+#include "inc/hw_ints.h"
 #include "driverlib/gpio.h"
 #include "driverlib/rom.h"
 #include "driverlib/sysctl.h"
@@ -12,7 +13,7 @@
 #include "driverlib/timer.h"
 #include "driverlib/ssi.h"
 
-#define DC_VALUE 2
+#define DC_VALUE 1
 #define NUM_TLC 6
 #define LEDS_PER_TLC 16
 #define TLC_GS_BYTES (12 * LEDS_PER_TLC * NUM_TLC / 8)
@@ -36,6 +37,9 @@
 #define LED_BLUE GPIO_PIN_2
 #define LED_GREEN GPIO_PIN_3
 
+/* To change this, must fix clock setup in the code. */
+#define MCU_HZ 80000000
+
 
 static void
 serial_output_hexdig(uint32_t dig)
@@ -54,7 +58,7 @@ serial_output_hexbyte(uint8_t byte)
 
 /* Configure Timer1B to output a PWM signal for GSCLK. */
 static void
-setup_pwm_GSCLK(void)
+setup_pwm_GSCLK_n_timer(void)
 {
   /* Enable the timer. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER1);
@@ -67,16 +71,26 @@ setup_pwm_GSCLK(void)
     normal drive (no pullup).
   */
   ROM_GPIOPinTypeTimer(GPIO_PORTB_BASE, GPIO_PIN_5);
-  /* Configure 2 * 16-bit timer in PWM mode. */
-  ROM_TimerConfigure(TIMER1_BASE, TIMER_CFG_16_BIT_PAIR | TIMER_CFG_B_PWM);
+  /* Configure 2 * 16-bit timer, B in PWM mode, A periodic. */
+  ROM_TimerConfigure(TIMER1_BASE, TIMER_CFG_SPLIT_PAIR |
+                     TIMER_CFG_A_PERIODIC | TIMER_CFG_B_PWM);
   /*
     Set timer1B start and compare values.
     High at 3, low at 1 -> 80MHz/4 = 20MHz clock.
   */
   ROM_TimerLoadSet(TIMER1_BASE, TIMER_B, 3);
   ROM_TimerMatchSet(TIMER1_BASE, TIMER_B, 1);
+
+  /* Set timer interrupt at GSCLK PWM period. */
+  ROM_TimerLoadSet(TIMER1_BASE, TIMER_A, 4*4096);
+
+  /* Enable interrrupts. */
+  ROM_IntMasterEnable();
+  ROM_TimerIntEnable(TIMER1_BASE, TIMER_TIMA_TIMEOUT);
+  ROM_IntEnable(INT_TIMER1A);
+
   /* Start the timer. */
-  ROM_TimerEnable(TIMER1_BASE, TIMER_B);
+  ROM_TimerEnable(TIMER1_BASE, TIMER_BOTH);
 }
 
 
@@ -365,7 +379,7 @@ anim2(uint8_t *buf, uint32_t count)
 
   for (i = 0; i < 32; ++i)
   {
-    uint32_t v = (i + (count/15)) % 48;
+    uint32_t v = (i + (count/70)) % 48;
     if (v < 16)
       set_led(buf, i, 4095, 4095*(15-v)/15, 0);
     else if (v < 24)
@@ -380,6 +394,32 @@ anim2(uint8_t *buf, uint32_t count)
 }
 
 
+static void
+led_stuff(void)
+{
+  static uint32_t counter = 0;
+
+  /* Flash the LED a bit. */
+  if (counter == 0 || counter == 100)
+    ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE,
+                     ROM_GPIOPinRead(GPIO_PORTF_BASE, LED_BLUE) ^ LED_BLUE);
+  ++counter;
+  if (counter == MCU_HZ/4/4096)
+    counter = 0;
+}
+
+
+static volatile uint8_t do_next_frame = 0;
+
+void
+IntHandlerTimer1A(void)
+{
+  ++do_next_frame;
+  ROM_TimerIntClear(TIMER1_BASE, TIMER_TIMA_TIMEOUT);
+  led_stuff();
+}
+
+
 int main()
 {
   uint32_t count;
@@ -388,7 +428,7 @@ int main()
   ROM_SysCtlClockSet(SYSCTL_SYSDIV_2_5 | SYSCTL_USE_PLL |
                      SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
 
-  setup_pwm_GSCLK();
+  setup_pwm_GSCLK_n_timer();
 
   /* Configure LED GPIOs. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
@@ -416,13 +456,8 @@ int main()
 
     ++count;
     display_led_data(buf);
-
-    /* Flash the LED a bit. */
-    ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE, LED_RED|LED_GREEN);
-    ROM_SysCtlDelay(50);
-    ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE, 0);
-    ROM_SysCtlDelay(50000+50000-500);
-
-    //ROM_UARTCharPut(UART0_BASE, '!');
+    while (!do_next_frame)
+      ;
+    do_next_frame = 0;
   }
 }
