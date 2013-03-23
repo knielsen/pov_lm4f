@@ -437,6 +437,30 @@ IntHandlerTimer1A(void)
 }
 
 
+ __attribute__ ((unused))
+static uint32_t
+mandelbrot_val(float cx, float cy, uint32_t N)
+{
+  float zx = 0;
+  float zy = 0;
+  uint32_t i = 1;
+
+  do
+  {
+    float a;
+
+    if (zx*zx + zy*zy > 4.0f)
+      break;
+    a = zx*zx - zy*zy + cx;
+    zy = 2*zx*zy + cy;
+    zx = a;
+    ++i;
+  } while (i <= N);
+
+  return i;
+}
+
+
 static uint8_t frame_buf[TLC_GS_BYTES];
 
 int main()
