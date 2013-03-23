@@ -1,4 +1,5 @@
 #include <inttypes.h>
+#include <math.h>
 
 #include "inc/hw_gpio.h"
 #include "inc/hw_memmap.h"
@@ -13,7 +14,7 @@
 #include "driverlib/timer.h"
 #include "driverlib/ssi.h"
 
-#define DC_VALUE 2
+#define DC_VALUE 9
 #define NUM_TLC 6
 #define LEDS_PER_TLC 16
 #define TLC_GS_BYTES (12 * LEDS_PER_TLC * NUM_TLC / 8)
@@ -40,6 +41,11 @@
 /* To change this, must fix clock setup in the code. */
 #define MCU_HZ 80000000
 
+
+
+#ifndef M_PI
+#define M_PI 3.141592654f
+#endif
 
 static void
 serial_output_hexdig(uint32_t dig)
@@ -380,18 +386,21 @@ anim2(uint8_t *buf, uint32_t count)
   for (i = 0; i < 32; ++i)
   {
     uint32_t v = (i + (count/70)) % 48;
+    float rampdown = (4095.0f/2.0f)*(1.0f+cosf((v%8)*(float)(M_PI/8.0)));
+    float rampup = (4095.0f/2.0f)*(1.0f-cosf((v%8)*(float)(M_PI/8.0)));
+
     if (v < 8)
-      set_led(buf, i,              4095,           4095*v/8,                 0);
+      set_led(buf, i,     4095,   rampup,        0);
     else if (v < 16)
-      set_led(buf, i, 4095-4095*(v-8)/8,               4095,                 0);
+      set_led(buf, i, rampdown,     4095,        0);
     else if (v < 24)
-      set_led(buf, i,                 0,               4095,     4095*(v-16)/8);
+      set_led(buf, i,        0,     4095,   rampup);
     else if (v < 32)
-      set_led(buf, i,                 0, 4095-4095*(v-24)/8,              4095);
+      set_led(buf, i,        0, rampdown,     4095);
     else if (v < 40)
-      set_led(buf, i,     4095*(v-32)/8,                  0,              4095);
+      set_led(buf, i,   rampup,        0,     4095);
     else
-      set_led(buf, i,              4095,                  0,4095-4095*(v-40)/8);
+      set_led(buf, i,     4095,        0, rampdown);
   }
 }
 
@@ -422,6 +431,8 @@ IntHandlerTimer1A(void)
 }
 
 
+static uint8_t frame_buf[TLC_GS_BYTES];
+
 int main()
 {
   uint32_t count;
@@ -450,14 +461,12 @@ int main()
 
   count = 0;
   for (;;) {
-    uint8_t buf[TLC_GS_BYTES];
-
     /* Try display a bit of animation. */
-    //anim1(buf, count);
-    anim2(buf, count);
+    //anim1(frame_buf, count);
+    anim2(frame_buf, count);
 
     ++count;
-    display_led_data(buf);
+    display_led_data(frame_buf);
     while (!do_next_frame)
       ;
     do_next_frame = 0;

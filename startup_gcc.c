@@ -50,7 +50,7 @@ extern void IntHandlerTimer1A(void);
 // Reserve space for the system stack.
 //
 //*****************************************************************************
-static unsigned long pulStack[64];
+static unsigned long pulStack[512];
 
 //*****************************************************************************
 //
