@@ -385,22 +385,28 @@ anim2(uint8_t *buf, uint32_t count)
 
   for (i = 0; i < 32; ++i)
   {
-    uint32_t v = (i + (count/70)) % 48;
-    float rampdown = (4095.0f/2.0f)*(1.0f+cosf((v%8)*(float)(M_PI/8.0)));
-    float rampup = (4095.0f/2.0f)*(1.0f-cosf((v%8)*(float)(M_PI/8.0)));
+    const uint32_t speed = 100;
+    const uint32_t W = 12*speed;
 
-    if (v < 8)
-      set_led(buf, i,     4095,   rampup,        0);
-    else if (v < 16)
-      set_led(buf, i, rampdown,     4095,        0);
-    else if (v < 24)
-      set_led(buf, i,        0,     4095,   rampup);
-    else if (v < 32)
-      set_led(buf, i,        0, rampdown,     4095);
-    else if (v < 40)
-      set_led(buf, i,   rampup,        0,     4095);
-    else
-      set_led(buf, i,     4095,        0, rampdown);
+    uint32_t v = (i*speed + count) % (W*6);
+    float rampdown = (4095.0f/2.0f)*(1.0f+cosf((v % W)*(float)(M_PI/W)));
+    float rampup = (4095.0f/2.0f)*(1.0f-cosf((v % W)*(float)(M_PI/W)));
+
+    switch (v/W)
+    {
+    case 0:
+      set_led(buf, i,     4095,   rampup,        0);  break;
+    case 1:
+      set_led(buf, i, rampdown,     4095,        0);  break;
+    case 2:
+      set_led(buf, i,        0,     4095,   rampup);  break;
+    case 3:
+      set_led(buf, i,        0, rampdown,     4095);  break;
+    case 4:
+      set_led(buf, i,   rampup,        0,     4095);  break;
+    case 5:
+      set_led(buf, i,     4095,        0, rampdown);  break;
+    }
   }
 }
 
