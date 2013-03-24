@@ -6,6 +6,7 @@
 #include "inc/hw_sysctl.h"
 #include "inc/hw_types.h"
 #include "inc/hw_ints.h"
+#include "inc/hw_ssi.h"
 #include "driverlib/gpio.h"
 #include "driverlib/rom.h"
 #include "driverlib/sysctl.h"
@@ -13,8 +14,10 @@
 #include "driverlib/uart.h"
 #include "driverlib/timer.h"
 #include "driverlib/ssi.h"
+#include "driverlib/udma.h"
 
-#define DC_VALUE 9
+
+#define DC_VALUE 2
 #define NUM_TLC 6
 #define LEDS_PER_TLC 16
 #define TLC_GS_BYTES (12 * LEDS_PER_TLC * NUM_TLC / 8)
@@ -246,7 +249,7 @@ init_tlc_dc(uint8_t dc_value)
       if (bits_collected == 6)
       {
         /* Check if the received DC value is correct, halt if not. */
-        if (value != DC_VALUE)
+        if (value != dc_value)
         {
           ROM_UARTCharPut(UART0_BASE, '#');
           serial_output_hexbyte(value);
@@ -273,6 +276,55 @@ init_tlc_dc(uint8_t dc_value)
   config_spi_tlc_write(8);
 }
 
+static uint32_t udma_control_block[256] __attribute__ ((aligned(1024)));
+static void
+init_udma_for_tlc(void)
+{
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_UDMA);
+  ROM_uDMAEnable();
+  ROM_uDMAControlBaseSet(udma_control_block);
+
+  ROM_SSIDMAEnable(SSI0_BASE, SSI_DMA_TX);
+  ROM_IntEnable(INT_SSI0);
+
+  ROM_uDMAChannelAttributeDisable(UDMA_CHANNEL_SSI0TX, UDMA_ATTR_ALTSELECT |
+                                  UDMA_ATTR_REQMASK | UDMA_ATTR_HIGH_PRIORITY);
+  ROM_uDMAChannelAttributeEnable(UDMA_CHANNEL_SSI0TX, UDMA_ATTR_USEBURST);
+  ROM_uDMAChannelControlSet(UDMA_CHANNEL_SSI0TX | UDMA_PRI_SELECT,
+                            UDMA_SIZE_8 | UDMA_SRC_INC_8 | UDMA_DST_INC_NONE |
+                            UDMA_ARB_4);
+}
+
+static volatile uint8_t ssi_udma_running = 0;
+
+ __attribute__ ((unused))
+static void
+shift_out_gs_to_tlc_udma(uint8_t *gs_data)
+{
+  while (ssi_udma_running)
+    ;
+  ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SSI0TX | UDMA_PRI_SELECT,
+                             UDMA_MODE_BASIC,
+                             gs_data, (void *)(SSI0_BASE + SSI_O_DR),
+                             TLC_GS_BYTES);
+  ssi_udma_running = 1;
+  ROM_uDMAChannelEnable(UDMA_CHANNEL_SSI0TX);
+
+  /*
+    ToDo: Eventually, we do not want to wait here.
+    Rather we will just start the transfer and let it run. And then we will
+    have the frame timer latch the data (after checking that udma really had
+    time to complete, and that FIFO was emptied).
+
+    But for now, let's just do like the non-dma code, just to make it easier
+    to find if anything don't work.
+  */
+  while (ssi_udma_running)
+    ;
+  while (ROM_SSIBusy(SSI0_BASE))
+    ;
+}
+
 
 /*
   Shift out an array of 12-bit grayscale data to the TLCs.
@@ -280,6 +332,7 @@ init_tlc_dc(uint8_t dc_value)
   Assumes that GPIO and SSI has already been configured and that
   VPRG (MODE) is already low to select GS mode.
 */
+ __attribute__ ((unused))
 static void
 shift_out_gs_to_tlc(uint8_t *gs_data)
 {
@@ -300,7 +353,7 @@ shift_out_gs_to_tlc(uint8_t *gs_data)
 static void
 display_led_data(uint8_t *gs_data)
 {
-  shift_out_gs_to_tlc(gs_data);
+  shift_out_gs_to_tlc_udma(gs_data);
 
   /* Pulse XLAT while holding BLANK high to latch new GS data. */
   ROM_SysCtlDelay(1);
@@ -361,17 +414,18 @@ gs_clear(uint8_t *buf)
 static void
 anim1(uint8_t *buf, uint32_t count)
 {
+  static const uint32_t val = 4095;
   gs_clear(buf);
   switch ((count/450/NUM_RGB_LEDS)%3)
   {
   case 0:
-    set_led(buf, ((count/450) % NUM_RGB_LEDS), 4095, 0, 0);
+    set_led(buf, ((count/450) % NUM_RGB_LEDS), val, 0, 0);
     break;
   case 1:
-    set_led(buf, ((count/450) % NUM_RGB_LEDS), 0, 4095, 0);
+    set_led(buf, ((count/450) % NUM_RGB_LEDS), 0, val, 0);
     break;
   case 2:
-    set_led(buf, ((count/450) % NUM_RGB_LEDS), 0, 0, 4095);
+    set_led(buf, ((count/450) % NUM_RGB_LEDS), 0, 0, val);
     break;
   }
 }
@@ -410,6 +464,16 @@ anim2(uint8_t *buf, uint32_t count)
   }
 }
 
+ __attribute__ ((unused))
+static void
+anim3(uint8_t *buf, uint32_t count)
+{
+  gs_clear(buf);
+  //set_led(buf, 0, 0, 0x0ff, 0);
+  //set_led(buf, 31, 0, 0, 0x100);
+  buf[0] = 0xff; buf[TLC_GS_BYTES-1] = 0xff;
+}
+
 
 static void
 led_stuff(void)
@@ -434,6 +498,15 @@ IntHandlerTimer1A(void)
   ++do_next_frame;
   ROM_TimerIntClear(TIMER1_BASE, TIMER_TIMA_TIMEOUT);
   led_stuff();
+}
+
+
+void
+IntHandlerSSI0(void)
+{
+  ROM_SSIIntClear(SSI0_BASE, ROM_SSIIntStatus(SSI0_BASE, 1));
+  if (!ROM_uDMAChannelIsEnabled(UDMA_CHANNEL_SSI0TX))
+    ssi_udma_running = 0;
 }
 
 
@@ -488,12 +561,14 @@ int main()
                        UART_CONFIG_PAR_NONE));
 
   init_tlc_dc(DC_VALUE);
+  init_udma_for_tlc();
 
   count = 0;
   for (;;) {
     /* Try display a bit of animation. */
     //anim1(frame_buf, count);
     anim2(frame_buf, count);
+    //anim3(frame_buf, count);
 
     ++count;
     display_led_data(frame_buf);
