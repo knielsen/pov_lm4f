@@ -1,5 +1,6 @@
 #include <inttypes.h>
 #include <math.h>
+#include <string.h>
 
 #include "inc/hw_gpio.h"
 #include "inc/hw_memmap.h"
@@ -17,7 +18,7 @@
 #include "driverlib/udma.h"
 
 
-#define DC_VALUE 2
+#define DC_VALUE 1
 #define NUM_TLC 6
 #define LEDS_PER_TLC 16
 #define TLC_GS_BYTES (12 * LEDS_PER_TLC * NUM_TLC / 8)
@@ -297,32 +298,26 @@ init_udma_for_tlc(void)
 
 static volatile uint8_t ssi_udma_running = 0;
 
- __attribute__ ((unused))
 static void
-shift_out_gs_to_tlc_udma(uint8_t *gs_data)
+wait_for_spi_to_tlcs(void)
 {
   while (ssi_udma_running)
     ;
+  while (ROM_SSIBusy(SSI0_BASE))
+    ;
+}
+
+
+ __attribute__ ((unused))
+static void
+start_shift_out_gs_to_tlc_udma(uint8_t *gs_data)
+{
   ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SSI0TX | UDMA_PRI_SELECT,
                              UDMA_MODE_BASIC,
                              gs_data, (void *)(SSI0_BASE + SSI_O_DR),
                              TLC_GS_BYTES);
   ssi_udma_running = 1;
   ROM_uDMAChannelEnable(UDMA_CHANNEL_SSI0TX);
-
-  /*
-    ToDo: Eventually, we do not want to wait here.
-    Rather we will just start the transfer and let it run. And then we will
-    have the frame timer latch the data (after checking that udma really had
-    time to complete, and that FIFO was emptied).
-
-    But for now, let's just do like the non-dma code, just to make it easier
-    to find if anything don't work.
-  */
-  while (ssi_udma_running)
-    ;
-  while (ROM_SSIBusy(SSI0_BASE))
-    ;
 }
 
 
@@ -350,11 +345,10 @@ shift_out_gs_to_tlc(uint8_t *gs_data)
   }
 }
 
-static void
-display_led_data(uint8_t *gs_data)
-{
-  shift_out_gs_to_tlc_udma(gs_data);
 
+static void
+latch_data_to_tlcs(void)
+{
   /* Pulse XLAT while holding BLANK high to latch new GS data. */
   ROM_SysCtlDelay(1);
   ROM_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_4, GPIO_PIN_4);
@@ -404,9 +398,7 @@ set_led(uint8_t *buf, uint32_t idx, uint32_t red, uint32_t green, uint32_t blue)
 static void
 gs_clear(uint8_t *buf)
 {
-  //memset(buf, 0, TLC_GS_BYTES);
-  for (uint32_t i = 0; i < TLC_GS_BYTES; ++i)
-    buf[i] = 0;
+  memset(buf, 0, TLC_GS_BYTES);
 }
 
 
@@ -439,27 +431,28 @@ anim2(uint8_t *buf, uint32_t count)
 
   for (i = 0; i < 32; ++i)
   {
-    const uint32_t speed = 100;
-    const uint32_t W = 12*speed;
+    static const uint32_t speed = 100;
+    static const uint32_t W = 12*speed;
+    static const uint32_t value = 4095;
 
     uint32_t v = (i*speed + count) % (W*6);
-    float rampdown = (4095.0f/2.0f)*(1.0f+cosf((v % W)*(float)(M_PI/W)));
-    float rampup = (4095.0f/2.0f)*(1.0f-cosf((v % W)*(float)(M_PI/W)));
+    float rampdown = (value/2.0f)*(1.0f+cosf((v % W)*(float)(M_PI/W)));
+    float rampup = (value/2.0f)*(1.0f-cosf((v % W)*(float)(M_PI/W)));
 
     switch (v/W)
     {
     case 0:
-      set_led(buf, i,     4095,   rampup,        0);  break;
+      set_led(buf, i,     value,   rampup,        0);  break;
     case 1:
-      set_led(buf, i, rampdown,     4095,        0);  break;
+      set_led(buf, i, rampdown,     value,        0);  break;
     case 2:
-      set_led(buf, i,        0,     4095,   rampup);  break;
+      set_led(buf, i,        0,     value,   rampup);  break;
     case 3:
-      set_led(buf, i,        0, rampdown,     4095);  break;
+      set_led(buf, i,        0, rampdown,     value);  break;
     case 4:
-      set_led(buf, i,   rampup,        0,     4095);  break;
+      set_led(buf, i,   rampup,        0,     value);  break;
     case 5:
-      set_led(buf, i,     4095,        0, rampdown);  break;
+      set_led(buf, i,     value,        0, rampdown);  break;
     }
   }
 }
@@ -481,7 +474,7 @@ led_stuff(void)
   static uint32_t counter = 0;
 
   /* Flash the LED a bit. */
-  if (counter == 0 || counter == 100)
+  if (counter == 0 || counter == 30)
     ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE,
                      ROM_GPIOPinRead(GPIO_PORTF_BASE, LED_BLUE) ^ LED_BLUE);
   ++counter;
@@ -491,13 +484,50 @@ led_stuff(void)
 
 
 static volatile uint8_t do_next_frame = 0;
+static volatile uint8_t current_tlc_frame_buf = 0;
+static uint8_t tlc_frame_buf[2][TLC_GS_BYTES];
 
 void
 IntHandlerTimer1A(void)
 {
-  ++do_next_frame;
+  uint8_t cur;
+  static uint32_t anim_counter = 0;
+  uint8_t *frame_buf;
+
   ROM_TimerIntClear(TIMER1_BASE, TIMER_TIMA_TIMEOUT);
+
+  /*
+    Latch in the new data. Be sure to wait first for it to be ready.
+
+    (Though if we have to wait, that indicates a timing problem, not enough
+    time to do one round of data until next timer interrupt. Eventually,
+    we should detect this so we can fix it if it occurs, relax timing.)
+  */
+  wait_for_spi_to_tlcs();
+  latch_data_to_tlcs();
+
+  cur = current_tlc_frame_buf;
+  start_shift_out_gs_to_tlc_udma(tlc_frame_buf[cur]);
+  cur = 1 - cur;
+  current_tlc_frame_buf = cur;
+
   led_stuff();
+  ++do_next_frame;
+
+  /*
+    Now do the next animation step.
+
+    Eventually, this should just be picking out the appropriate line from
+    the 2D buffer; then the main program will update the 2D buffer with the
+    real animation.
+  */
+  frame_buf = tlc_frame_buf[cur];
+
+  //anim1(frame_buf, anim_counter);
+  anim2(frame_buf, anim_counter);
+  //anim3(frame_buf, anim_counter);
+
+  ++anim_counter;
 }
 
 
@@ -534,17 +564,11 @@ mandelbrot_val(float cx, float cy, uint32_t N)
 }
 
 
-static uint8_t frame_buf[TLC_GS_BYTES];
-
 int main()
 {
-  uint32_t count;
-
   /* Use the full 80MHz system clock. */
   ROM_SysCtlClockSet(SYSCTL_SYSDIV_2_5 | SYSCTL_USE_PLL |
                      SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
-
-  setup_pwm_GSCLK_n_timer();
 
   /* Configure LED GPIOs. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
@@ -563,15 +587,14 @@ int main()
   init_tlc_dc(DC_VALUE);
   init_udma_for_tlc();
 
-  count = 0;
-  for (;;) {
-    /* Try display a bit of animation. */
-    //anim1(frame_buf, count);
-    anim2(frame_buf, count);
-    //anim3(frame_buf, count);
+  /*
+    Once we start the timers, we will get interrupts that sends data
+    to the TLCs and latch it. So we must do this after everything else
+    is set up correctly.
+  */
+  setup_pwm_GSCLK_n_timer();
 
-    ++count;
-    display_led_data(frame_buf);
+  for (;;) {
     while (!do_next_frame)
       ;
     do_next_frame = 0;
