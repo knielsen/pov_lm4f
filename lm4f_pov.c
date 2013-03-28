@@ -36,6 +36,8 @@
   PA6  XLAT
   PA7  MODE
   PB4  BLANK
+
+  PB0  HALL
 */
 
 #define LED_RED GPIO_PIN_1
@@ -63,6 +65,14 @@ serial_output_hexbyte(uint8_t byte)
 {
   serial_output_hexdig(byte >> 4);
   serial_output_hexdig(byte & 0xf);
+}
+
+
+static void
+setup_hall_gpio(void)
+{
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
+  ROM_GPIOPinTypeGPIOInput(GPIO_PORTB_BASE, GPIO_PIN_0);
 }
 
 
@@ -474,8 +484,8 @@ led_stuff(void)
   static uint32_t counter = 0;
 
   /* Flash the LED a bit. */
-  if (counter == 0 || counter == 30)
-    ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE,
+  if (counter == 0 || counter == 300)
+    ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_BLUE,
                      ROM_GPIOPinRead(GPIO_PORTF_BASE, LED_BLUE) ^ LED_BLUE);
   ++counter;
   if (counter == MCU_HZ/4/4096)
@@ -528,6 +538,11 @@ IntHandlerTimer1A(void)
   //anim3(frame_buf, anim_counter);
 
   ++anim_counter;
+
+  if (ROM_GPIOPinRead(GPIO_PORTB_BASE, GPIO_PIN_0))
+    ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN, LED_GREEN);
+  else
+    ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN, LED_RED);
 }
 
 
@@ -570,9 +585,13 @@ int main()
   ROM_SysCtlClockSet(SYSCTL_SYSDIV_2_5 | SYSCTL_USE_PLL |
                      SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
 
+  /* Setup GPIO to read HALL sensor. */
+  setup_hall_gpio();
+
   /* Configure LED GPIOs. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
   ROM_GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, LED_RED|LED_BLUE|LED_GREEN);
+  ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE, 0);
 
   /* Configure serial. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
