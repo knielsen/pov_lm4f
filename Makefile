@@ -36,7 +36,7 @@ $(STARTUP).o: $(STARTUP).c
 %.bin: %.elf
 	$(OBJCOPY) -O binary $< $@
 
-flash:
+flash: $(TARGET).bin
 	$(LM4FLASH) $(TARGET).bin
 
 clean:
