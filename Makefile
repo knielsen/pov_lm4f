@@ -17,30 +17,34 @@ INC=-I/home/knielsen/devel/study/stellaris-arm/SW-EK-LM4F120XL-9453 -DPART_LM4F1
 CFLAGS=-g -Os  -std=c99 -Wall -pedantic $(ARCH_CFLAGS) $(INC)
 LDFLAGS=--entry ResetISR --gc-sections
 
+OBJS = $(TARGET).o gfx.o
+
 all: $(TARGET).bin
 
 $(TARGET).bin: $(TARGET).elf
 
-$(TARGET).elf: $(TARGET).o $(STARTUP).o $(LINKSCRIPT)
+$(TARGET).elf: $(OBJS) $(STARTUP).o $(LINKSCRIPT)
+	$(LD) $(LDFLAGS) -T $(LINKSCRIPT) -o $@ $(STARTUP).o $(OBJS) $(FP_LDFLAGS)
 
-$(TARGET).o: $(TARGET).c
+$(TARGET).o: $(TARGET).c gfx.h
+gfx.o: gfx.c gfx.h tlc_lookup.h
 
 $(STARTUP).o: $(STARTUP).c
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-%.elf: %.o
-	$(LD) $(LDFLAGS) -T $(LINKSCRIPT) -o $@ $(STARTUP).o $< $(FP_LDFLAGS)
-
 %.bin: %.elf
 	$(OBJCOPY) -O binary $< $@
+
+tlc_lookup.h: mk_tlc_lookup.pl
+	perl mk_tlc_lookup.pl > tlc_lookup.h
 
 flash: $(TARGET).bin
 	$(LM4FLASH) $(TARGET).bin
 
 clean:
-	rm -f $(TARGET).o $(TARGET).elf $(TARGET).bin $(STARTUP).o
+	rm -f $(OBJS) $(TARGET).elf $(TARGET).bin $(STARTUP).o
 
 tty:
 	stty -F/dev/ttyACM0 raw -echo -hup cs8 -parenb -cstopb 115200

@@ -8,6 +8,7 @@
 #include "inc/hw_types.h"
 #include "inc/hw_ints.h"
 #include "inc/hw_ssi.h"
+#include "inc/hw_timer.h"
 #include "driverlib/gpio.h"
 #include "driverlib/rom.h"
 #include "driverlib/sysctl.h"
@@ -16,6 +17,8 @@
 #include "driverlib/timer.h"
 #include "driverlib/ssi.h"
 #include "driverlib/udma.h"
+
+#include "gfx.h"
 
 
 #define DC_VALUE 1
@@ -37,7 +40,7 @@
   PA7  MODE
   PB4  BLANK
 
-  PB0  HALL
+  PC4  HALL
 */
 
 #define LED_RED GPIO_PIN_1
@@ -69,10 +72,163 @@ serial_output_hexbyte(uint8_t byte)
 
 
 static void
-setup_hall_gpio(void)
+serial_output_str(const char *str)
 {
-  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
-  ROM_GPIOPinTypeGPIOInput(GPIO_PORTB_BASE, GPIO_PIN_0);
+  char c;
+
+  while ((c = *str++))
+    ROM_UARTCharPut(UART0_BASE, c);
+}
+
+
+ __attribute__ ((unused))
+static void
+println_uint32(uint32_t val)
+{
+  char buf[12];
+  char *p = buf;
+  uint32_t l, d;
+
+  l = 1000000000UL;
+  while (l > val && l > 1)
+    l /= 10;
+
+  do
+  {
+    d = val / l;
+    *p++ = '0' + d;
+    val -= d*l;
+    l /= 10;
+  } while (l > 0);
+
+  *p++ = '\n';
+  *p = '\0';
+  serial_output_str(buf);
+}
+
+
+static void
+float_to_str(char *buf, float f, uint32_t dig_before, uint32_t dig_after)
+{
+  float a;
+  uint32_t d;
+  uint8_t leading_zero;
+
+  if (f == 0.0f)
+  {
+    buf[0] = '0';
+    buf[1] = '\0';
+    return;
+  }
+  if (f < 0)
+  {
+    *buf++ = '-';
+    f = -f;
+  }
+  a =  powf(10.0f, (float)dig_before);
+  if (f >= a)
+  {
+    buf[0] = '#';
+    buf[1] = '\0';
+    return;
+  }
+  leading_zero = 1;
+  while (dig_before)
+  {
+    a /= 10.0f;
+    d = (uint32_t)(f / a);
+    if (leading_zero && d == 0 && a >= 10.0f)
+      *buf++ = ' ';
+    else
+    {
+      leading_zero = 0;
+      *buf++ = '0' + d;
+      f -= d*a;
+    }
+    --dig_before;
+  }
+  if (!dig_after)
+  {
+    *buf++ = '\0';
+    return;
+  }
+  *buf++ = '.';
+  do
+  {
+    f *= 10.0f;
+    d = (uint32_t)f;
+    *buf++ = '0' + d;
+    f -= (float)d;
+    --dig_after;
+  } while (dig_after);
+  *buf++ = '\0';
+}
+
+
+ __attribute__ ((unused))
+static void
+println_float(float f, uint32_t dig_before, uint32_t dig_after)
+{
+  char buf[20];
+  char *p = buf;
+
+  float_to_str(p, f, dig_before, dig_after);
+  while (*p)
+    ++p;
+  *p++ = '\n';
+  *p = '\0';
+  serial_output_str(buf);
+}
+
+
+static void
+setup_hall_gpio_n_timer(void)
+{
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_WTIMER0);
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOC);
+  ROM_GPIOPinConfigure(GPIO_PC4_WT0CCP0);
+  ROM_GPIOPinTypeTimer(GPIO_PORTC_BASE, GPIO_PIN_4);
+
+  /*
+    I could not get the timer capture to work in count-up mode.
+    Perhaps count-up for capture is just not supported on my chip, though
+    I did not see this anywhere in the datasheet...
+  */
+
+  ROM_TimerConfigure(WTIMER0_BASE, TIMER_CFG_SPLIT_PAIR | TIMER_CFG_A_CAP_TIME);
+  ROM_TimerLoadSet(WTIMER0_BASE, TIMER_A, 0xffffffffUL);
+  ROM_TimerMatchSet(WTIMER0_BASE, TIMER_A, 0);
+  ROM_TimerControlEvent(WTIMER0_BASE, TIMER_A, TIMER_EVENT_POS_EDGE);
+
+  ROM_IntMasterEnable();
+  ROM_TimerIntEnable(WTIMER0_BASE, TIMER_CAPA_EVENT);
+  ROM_IntEnable(INT_WTIMER0A);
+
+  ROM_TimerEnable(WTIMER0_BASE, TIMER_A);
+}
+
+
+static volatile uint32_t last_hall = 0xffffffffUL;
+static volatile uint32_t hall_int_counts = 0;
+
+static volatile uint32_t hall_capture_delay = 0;
+
+void
+IntHandlerWTimer0A(void)
+{
+  uint32_t timer_val;
+
+  /*
+    Wait a little while before taking the interrupt again.
+    This to work-around a very unstable signal around the low->high
+    transition.
+  */
+  ROM_IntDisable(INT_WTIMER0A);
+  hall_capture_delay = 5;
+
+  timer_val= ROM_TimerValueGet(WTIMER0_BASE, TIMER_A);
+  last_hall = timer_val;
+  ++hall_int_counts;
 }
 
 
@@ -478,6 +634,16 @@ anim3(uint8_t *buf, uint32_t count)
 }
 
 
+ __attribute__ ((unused))
+static void
+anim4(uint8_t *buf, uint32_t count)
+{
+  float angle = 2.0f*(float)M_PI*(count % 30000)/30000.0f;
+  angle = 2.0f*(float)M_PI*0.75f;
+  bm_scanline(angle, 32, buf);
+}
+
+
 static void
 led_stuff(void)
 {
@@ -503,6 +669,7 @@ IntHandlerTimer1A(void)
   uint8_t cur;
   static uint32_t anim_counter = 0;
   uint8_t *frame_buf;
+  uint32_t tmp;
 
   ROM_TimerIntClear(TIMER1_BASE, TIMER_TIMA_TIMEOUT);
 
@@ -534,15 +701,27 @@ IntHandlerTimer1A(void)
   frame_buf = tlc_frame_buf[cur];
 
   //anim1(frame_buf, anim_counter);
-  anim2(frame_buf, anim_counter);
+  //anim2(frame_buf, anim_counter);
   //anim3(frame_buf, anim_counter);
+  anim4(frame_buf, anim_counter);
 
   ++anim_counter;
 
-  if (ROM_GPIOPinRead(GPIO_PORTB_BASE, GPIO_PIN_0))
+  /* Show the status of the HALL sensor. */
+  if (ROM_GPIOPinRead(GPIO_PORTC_BASE, GPIO_PIN_4))
     ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN, LED_GREEN);
   else
     ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN, LED_RED);
+
+  /* Restart HALL capture a little while after last event. */
+  tmp = hall_capture_delay;
+  if (tmp)
+    hall_capture_delay = tmp-1;
+  else
+  {
+    ROM_TimerIntClear(WTIMER0_BASE, TIMER_CAPA_EVENT);
+    ROM_IntEnable(INT_WTIMER0A);
+  }
 }
 
 
@@ -585,8 +764,10 @@ int main()
   ROM_SysCtlClockSet(SYSCTL_SYSDIV_2_5 | SYSCTL_USE_PLL |
                      SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
 
+  generate_test_image();
+
   /* Setup GPIO to read HALL sensor. */
-  setup_hall_gpio();
+  setup_hall_gpio_n_timer();
 
   /* Configure LED GPIOs. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
@@ -616,8 +797,16 @@ int main()
   setup_pwm_GSCLK_n_timer();
 
   for (;;) {
-    while (!do_next_frame)
-      ;
-    do_next_frame = 0;
+    static uint32_t prior_hall= 0xffffffffUL;
+    uint32_t hall;
+
+    hall = last_hall;
+    if (hall != prior_hall)
+    {
+      ROM_UARTCharPut(UART0_BASE, '>');
+      println_float((prior_hall - hall)/(float)MCU_HZ, 2, 4);
+      println_uint32(hall_int_counts);
+      prior_hall = hall;
+    }
   }
 }
