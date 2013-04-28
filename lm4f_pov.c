@@ -639,7 +639,6 @@ static void
 anim4(uint8_t *buf, uint32_t count)
 {
   float angle = 2.0f*(float)M_PI*(count % 30000)/30000.0f;
-  angle = 2.0f*(float)M_PI*0.75f;
   bm_scanline(angle, 32, buf);
 }
 

@@ -105,8 +105,8 @@ bm_scanline(float angle, int32_t n, uint8_t *scanline_buf)
 
     We add 0.5 here so that simple uint32_t cast does round-to-nearest.
   */
-  cx += (start+(n-1)*rx)*dx + 0.5f;
-  cy += (start+(n-1)*ry)*dy + 0.5f;
+  cx += start*rx + (n-1)*dx + 0.5f;
+  cy += start*ry + (n-1)*dy + 0.5f;
 
   /*
     Each RGB pixel results in 12*3 = 36 bits of shift-out data.
@@ -148,6 +148,7 @@ bm_scanline(float angle, int32_t n, uint8_t *scanline_buf)
 }
 
 
+ __attribute__ ((unused))
 static void
 bm_clear(void)
 {
@@ -158,8 +159,9 @@ bm_clear(void)
 }
 
 
+ __attribute__ ((unused))
 static void
-bm_put_disk(int16_t cx, int16_t cy, int16_t r, uint16_t packed_col)
+bm_put_disk(int32_t cx, int32_t cy, int32_t r, uint16_t packed_col)
 {
   int16_t x, y;
 
@@ -175,17 +177,48 @@ void
 generate_test_image(void)
 {
 /*
-  static const uint16_t r = 20;
-  static const uint16_t d = 30;
+  Three disks, one of each colour red, blue, green.
+*/
+  static const uint16_t r = 10;
+  static const uint16_t d = 15;
 
   bm_clear();
-  bm_put_disk(0, BM_SIZE_Y/2+d, r, pack_col(15, 0, 0));
+  bm_put_disk(BM_SIZE_X/2, BM_SIZE_Y/2+d, r, pack_col(15, 0, 0));
   bm_put_disk(BM_SIZE_X/2 + d*0.866f, BM_SIZE_Y/2 - d*0.5f, r, pack_col(0, 15, 0));
   bm_put_disk(BM_SIZE_X/2 - d*0.866f, BM_SIZE_Y/2 - d*0.5f, r, pack_col(0, 0, 15));
-*/
+
+/*
+  Fill up with white pixels.
 
   uint32_t x, y;
   for (x = 0; x < BM_SIZE_X; ++x)
     for (y = 0; y < BM_SIZE_Y; ++y)
       bm_put_pixel_check(x, y, 0xfff);
+*/
+
+/*
+  Four quadrants, red, green, black, blue.
+
+  int32_t x, y;
+  for (x = 0; x < BM_SIZE_X; ++x)
+  {
+    for (y = 0; y < BM_SIZE_Y; ++y)
+    {
+      float dx = (float)x - BM_SIZE_X/2.0f;
+      float dy = (float)y - BM_SIZE_Y/2.0f;
+      float r = sqrtf(dx*dx+dy*dy);
+      uint32_t c = r / 1.5f;
+      if (c > 15)
+        c = 15;
+      if (x > BM_SIZE_X/2 && y > BM_SIZE_Y/2)
+        bm_put_pixel(x, y, pack_col(c, 0, 0));
+      else if (x < BM_SIZE_X/2 && y > BM_SIZE_Y/2)
+        bm_put_pixel(x, y, pack_col(0, c, 0));
+      else if (x > BM_SIZE_X/2 && y < BM_SIZE_Y/2)
+        bm_put_pixel(x, y, pack_col(0, 0, c));
+      else
+        bm_put_pixel(x, y, pack_col(0, 0, 0));
+    }
+  }
+*/
 }
