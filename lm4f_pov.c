@@ -634,12 +634,19 @@ anim3(uint8_t *buf, uint32_t count)
 }
 
 
+uint32_t scanline_time;
+
  __attribute__ ((unused))
 static void
 anim4(uint8_t *buf, uint32_t count)
 {
   float angle = 2.0f*(float)M_PI*(count % 30000)/30000.0f;
+  uint32_t t_start, t_stop;
+
+  t_start = HWREG(WTIMER0_BASE + TIMER_O_TAV);
   bm_scanline(angle, 32, buf);
+  t_stop = HWREG(WTIMER0_BASE + TIMER_O_TAV);
+  scanline_time = t_start - t_stop;
 }
 
 
@@ -806,6 +813,8 @@ int main()
       println_float((prior_hall - hall)/(float)MCU_HZ, 2, 4);
       println_uint32(hall_int_counts);
       prior_hall = hall;
+
+      println_uint32(scanline_time);
     }
   }
 }

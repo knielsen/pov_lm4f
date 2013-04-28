@@ -14,7 +14,7 @@ FP_LDFLAGS= -L$(GCCDIR)/arm-none-eabi/lib/thumb/cortex-m4/float-abi-hard/fpuv4-s
 
 ARCH_CFLAGS=-mthumb -mcpu=cortex-m4 -mfpu=fpv4-sp-d16 -mfloat-abi=hard -ffunction-sections -fdata-sections -DTARGET_IS_BLIZZARD_RA1
 INC=-I/home/knielsen/devel/study/stellaris-arm/SW-EK-LM4F120XL-9453 -DPART_LM4F120H5QR
-CFLAGS=-g -Os  -std=c99 -Wall -pedantic $(ARCH_CFLAGS) $(INC)
+CFLAGS=-g -O3  -std=c99 -Wall -pedantic $(ARCH_CFLAGS) $(INC)
 LDFLAGS=--entry ResetISR --gc-sections
 
 OBJS = $(TARGET).o gfx.o
