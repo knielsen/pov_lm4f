@@ -209,6 +209,7 @@ setup_hall_gpio_n_timer(void)
 
 
 static volatile uint32_t last_hall = 0xffffffffUL;
+static volatile uint32_t last_hall_period = 0;
 static volatile uint32_t hall_int_counts = 0;
 
 static volatile uint32_t hall_capture_delay = 0;
@@ -224,9 +225,11 @@ IntHandlerWTimer0A(void)
     transition.
   */
   ROM_IntDisable(INT_WTIMER0A);
-  hall_capture_delay = 5;
+  ROM_TimerIntClear(WTIMER0_BASE, TIMER_CAPA_EVENT);
+  hall_capture_delay = 50;
 
   timer_val= ROM_TimerValueGet(WTIMER0_BASE, TIMER_A);
+  last_hall_period = last_hall - timer_val;
   last_hall = timer_val;
   ++hall_int_counts;
 }
@@ -675,6 +678,9 @@ IntHandlerTimer1A(void)
   uint8_t cur;
   static uint32_t anim_counter = 0;
   uint8_t *frame_buf;
+  uint32_t current_time, start_time, current_period;
+  uint32_t estim_latch_time, estim_delta;
+  float angle;
   uint32_t tmp;
 
   ROM_TimerIntClear(TIMER1_BASE, TIMER_TIMA_TIMEOUT);
@@ -688,6 +694,9 @@ IntHandlerTimer1A(void)
   */
   wait_for_spi_to_tlcs();
   latch_data_to_tlcs();
+  current_time = HWREG(WTIMER0_BASE + TIMER_O_TAV);
+  start_time = last_hall;
+  current_period = last_hall_period;
 
   cur = current_tlc_frame_buf;
   start_shift_out_gs_to_tlc_udma(tlc_frame_buf[cur]);
@@ -709,7 +718,23 @@ IntHandlerTimer1A(void)
   //anim1(frame_buf, anim_counter);
   //anim2(frame_buf, anim_counter);
   //anim3(frame_buf, anim_counter);
-  anim4(frame_buf, anim_counter);
+  //anim4(frame_buf, anim_counter);
+
+  /*
+    Estimate the angle of rotation when the scanline we are about to generate
+    is latched.
+
+    This timer interrupt we are writing the data into the buffer, the next
+    interrupt we will shift it out, so latch will be in two timer periods.
+  */
+  estim_latch_time = current_time - 2*4*4096;
+  estim_delta = start_time - estim_latch_time;
+  if (current_period < 1)
+    current_period = 1;
+  if (estim_delta > current_period)
+    estim_delta = current_period;
+  angle = (float)(2.0f*M_PI) * (float)estim_delta / (float)current_period;
+  bm_scanline(angle, 32, frame_buf);
 
   ++anim_counter;
 
@@ -810,7 +835,7 @@ int main()
     if (hall != prior_hall)
     {
       ROM_UARTCharPut(UART0_BASE, '>');
-      println_float((prior_hall - hall)/(float)MCU_HZ, 2, 4);
+      println_float(last_hall_period/(float)MCU_HZ, 2, 4);
       println_uint32(hall_int_counts);
       prior_hall = hall;
 
