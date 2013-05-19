@@ -38,9 +38,15 @@
 
   PA6  XLAT
   PA7  MODE
-  PB4  BLANK
+  PE1  BLANK
 
   PC4  HALL
+
+  micro-SD Card:  MISO  PD2 (white)
+                  MOSI  PD3 (green)
+                  CLK   PD0 (brown, middle)
+                  CS    PD1 (brown, right)
+
 */
 
 #define LED_RED GPIO_PIN_1
@@ -294,9 +300,9 @@ config_tlc_gpio(void)
   ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_7, 0);
 
   /* Setup PB4 for BLANK, pull it high initially. */
-  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
-  ROM_GPIOPinTypeGPIOOutput(GPIO_PORTB_BASE, GPIO_PIN_4);
-  ROM_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_4, GPIO_PIN_4);
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
+  ROM_GPIOPinTypeGPIOOutput(GPIO_PORTE_BASE, GPIO_PIN_1);
+  ROM_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_1, GPIO_PIN_1);
 }
 
 
@@ -520,13 +526,13 @@ latch_data_to_tlcs(void)
 {
   /* Pulse XLAT while holding BLANK high to latch new GS data. */
   ROM_SysCtlDelay(1);
-  ROM_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_4, GPIO_PIN_4);
+  ROM_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_1, GPIO_PIN_1);
   ROM_SysCtlDelay(1);
   ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, GPIO_PIN_6);
   ROM_SysCtlDelay(1);
   ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, 0);
   ROM_SysCtlDelay(1);
-  ROM_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_4, 0);
+  ROM_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_1, 0);
   ROM_SysCtlDelay(1);
 }
 
