@@ -299,7 +299,7 @@ config_tlc_gpio(void)
   /* Set MODE low, to select GS mode. */
   ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_7, 0);
 
-  /* Setup PB4 for BLANK, pull it high initially. */
+  /* Setup PE1 for BLANK, pull it high initially. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
   ROM_GPIOPinTypeGPIOOutput(GPIO_PORTE_BASE, GPIO_PIN_1);
   ROM_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_1, GPIO_PIN_1);
