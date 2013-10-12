@@ -356,11 +356,24 @@ init_tlc_dc(uint8_t dc_value)
   uint32_t i;
   uint32_t value;
   uint32_t bits_collected;
+  uint32_t error_retry_count=3;
+  uint32_t dc_errors;
 
   config_tlc_gpio();
 
+try_again:
   /* Prepare to write 6-bit DC words to TLC. */
   config_spi_tlc_write(6);
+
+  /*
+    Clock out an initial dummy byte, just to get the clock and data
+    signals stable.
+  */
+  ROM_SSIDataPut(SSI0_BASE, 0);
+  while (ROM_SSIBusy(SSI0_BASE))
+    ;
+  /* Drain the receive FIFO just so it does not get full. */
+  ROM_SSIDataGet(SSI0_BASE, &data);
 
   /* Set MODE high, to select DC mode. */
   ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_7, GPIO_PIN_7);
@@ -401,6 +414,7 @@ init_tlc_dc(uint8_t dc_value)
 
   bits_collected = 0;
   value = 0;
+  dc_errors = 0;
   for (i = 0; i < 12*LEDS_PER_TLC*NUM_TLC/8; ++i)
   {
     uint32_t j;
@@ -431,14 +445,7 @@ init_tlc_dc(uint8_t dc_value)
           serial_output_hexbyte(value);
           ROM_UARTCharPut(UART0_BASE, '#');
           ROM_UARTCharPut(UART0_BASE, '\n');
-          /* Flash the red LED endlessly to complain. */
-          for (;;)
-          {
-            ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE, LED_RED);
-            ROM_SysCtlDelay(40000000/3);
-            ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE, 0);
-            ROM_SysCtlDelay(40000000/3);
-          }
+          ++dc_errors;
         }
         value = 0;
         bits_collected = 0;
@@ -447,6 +454,23 @@ init_tlc_dc(uint8_t dc_value)
   }
   ROM_UARTCharPut(UART0_BASE, '!');
   ROM_UARTCharPut(UART0_BASE, '\n');
+
+  if (dc_errors > 0)
+  {
+    if (error_retry_count > 0)
+    {
+      --error_retry_count;
+      goto try_again;
+    }
+    /* Flash the red LED endlessly to complain. */
+    for (;;)
+    {
+      ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE, LED_RED);
+      ROM_SysCtlDelay(40000000/3);
+      ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE, 0);
+      ROM_SysCtlDelay(40000000/3);
+    }
+  }
 
   /* Leave the SPI in GS write mode. */
   config_spi_tlc_write(8);
