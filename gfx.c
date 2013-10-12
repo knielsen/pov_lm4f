@@ -188,6 +188,23 @@ generate_test_image(void)
   bm_put_disk(BM_SIZE_X/2 - d*0.866f, BM_SIZE_Y/2 - d*0.5f, r, pack_col(0, 0, 15));
 
 /*
+  Colour gradients.
+  uint32_t i, j;
+  bm_clear();
+  for (i= 0; i < BM_SIZE_X; ++i)
+  {
+    for (j = 0; j < BM_SIZE_Y; ++j)
+    {
+      uint32_t r, g, b;
+      b = i*15/BM_SIZE_X;
+      g = j*15/BM_SIZE_Y;
+      r = ((BM_SIZE_X-1-i) + (BM_SIZE_Y-1-j)) * 15 / (BM_SIZE_X + BM_SIZE_Y);
+      bm_put_pixel(i, j, pack_col(r, g, b));
+    }
+  }
+*/
+
+/*
   Fill up with white pixels.
 
   uint32_t x, y;
