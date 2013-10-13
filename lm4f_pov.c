@@ -53,6 +53,14 @@
 #define LED_BLUE GPIO_PIN_2
 #define LED_GREEN GPIO_PIN_3
 
+
+/*
+  Useful for testing.
+  When defined, the actual hall sensor is ignored, instead it fakes that
+  the hall triggers with some reasonable frequency.
+*/
+#define FAKE_HALL_SENSOR 1
+
 /* To change this, must fix clock setup in the code. */
 #define MCU_HZ 80000000
 
@@ -220,11 +228,18 @@ static volatile uint32_t hall_int_counts = 0;
 
 static volatile uint32_t hall_capture_delay = 0;
 
+static void
+record_hall_sensor(uint32_t timer_val)
+{
+  last_hall_period = last_hall - timer_val;
+  last_hall = timer_val;
+  ++hall_int_counts;
+}
+
+
 void
 IntHandlerWTimer0A(void)
 {
-  uint32_t timer_val;
-
   /*
     Wait a little while before taking the interrupt again.
     This to work-around a very unstable signal around the low->high
@@ -234,10 +249,9 @@ IntHandlerWTimer0A(void)
   ROM_TimerIntClear(WTIMER0_BASE, TIMER_CAPA_EVENT);
   hall_capture_delay = 50;
 
-  timer_val= ROM_TimerValueGet(WTIMER0_BASE, TIMER_A);
-  last_hall_period = last_hall - timer_val;
-  last_hall = timer_val;
-  ++hall_int_counts;
+#ifndef FAKE_HALL_SENSOR
+  record_hall_sensor(ROM_TimerValueGet(WTIMER0_BASE, TIMER_A));
+#endif
 }
 
 
@@ -712,6 +726,9 @@ IntHandlerTimer1A(void)
   uint32_t estim_latch_time, estim_delta;
   float angle;
   uint32_t tmp;
+#ifdef FAKE_HALL_SENSOR
+  static uint32_t fake_hall_counter = 0;
+#endif
 
   ROM_TimerIntClear(TIMER1_BASE, TIMER_TIMA_TIMEOUT);
 
@@ -769,10 +786,12 @@ IntHandlerTimer1A(void)
   ++anim_counter;
 
   /* Show the status of the HALL sensor. */
+#ifndef FAKE_HALL_SENSOR
   if (ROM_GPIOPinRead(GPIO_PORTC_BASE, GPIO_PIN_4))
     ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN, LED_GREEN);
   else
     ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN, LED_RED);
+#endif
 
   /* Restart HALL capture a little while after last event. */
   tmp = hall_capture_delay;
@@ -783,6 +802,13 @@ IntHandlerTimer1A(void)
     ROM_TimerIntClear(WTIMER0_BASE, TIMER_CAPA_EVENT);
     ROM_IntEnable(INT_WTIMER0A);
   }
+#ifdef FAKE_HALL_SENSOR
+  if (++fake_hall_counter > 5000)
+  {
+    fake_hall_counter = 0;
+    record_hall_sensor(current_time);
+  }
+#endif
 }
 
 
