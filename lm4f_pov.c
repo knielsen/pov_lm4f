@@ -256,17 +256,17 @@ IntHandlerWTimer0A(void)
 
 
 /*
-  Configure Timer2B to output a PWM signal for GSCLK.
+  Configure Timer2B to output a PWM signal for GSCLK1.
   Timer2A triggers an interrupt at the end of each TLC5940 PWM period.
 */
 static void
-setup_pwm_GSCLK_n_timer(void)
+setup_pwm_GSCLK1_n_timer(void)
 {
   /* Enable the timer. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER2);
   /* Enable the GPIO module for the timer pin. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
-  /* Configure PB1 to be I/O pin for timer 1 B. */
+  /* Configure PB1 to be I/O pin for timer 2 B. */
   ROM_GPIOPinConfigure(GPIO_PB1_T2CCP1);
   /*
     Configure PB1: direction controlled by hardware, 2mA drive strength,
@@ -293,6 +293,40 @@ setup_pwm_GSCLK_n_timer(void)
 
   /* Start the timer. */
   ROM_TimerEnable(TIMER2_BASE, TIMER_BOTH);
+}
+
+
+/* Configure Timer3 to output a PWM signal for GSCLK2 and 3. */
+static void
+setup_pwm_GSCLK23(void)
+{
+  /* Enable the timer. */
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER3);
+  /* Enable the GPIO module for the timer pin. */
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
+  /* Configure PB2 and PB3 to be I/O pins for timer 3 A and B. */
+  ROM_GPIOPinConfigure(GPIO_PB2_T3CCP0);
+  ROM_GPIOPinConfigure(GPIO_PB3_T3CCP1);
+  /*
+    Configure PB2 and PB3: direction controlled by hardware, 2mA drive
+    strength, normal drive (no pullup).
+  */
+  ROM_GPIOPinTypeTimer(GPIO_PORTB_BASE, GPIO_PIN_2);
+  ROM_GPIOPinTypeTimer(GPIO_PORTB_BASE, GPIO_PIN_3);
+  /* Configure 2 * 16-bit timer in PWM mode. */
+  ROM_TimerConfigure(TIMER3_BASE, TIMER_CFG_SPLIT_PAIR |
+                     TIMER_CFG_A_PWM | TIMER_CFG_B_PWM);
+  /*
+    Set timer3A/B start and compare values.
+    High at 3, low at 1 -> 80MHz/4 = 20MHz clock.
+  */
+  ROM_TimerLoadSet(TIMER3_BASE, TIMER_A, 3);
+  ROM_TimerMatchSet(TIMER3_BASE, TIMER_A, 1);
+  ROM_TimerLoadSet(TIMER3_BASE, TIMER_B, 3);
+  ROM_TimerMatchSet(TIMER3_BASE, TIMER_B, 1);
+
+  /* Start the timer. */
+  ROM_TimerEnable(TIMER3_BASE, TIMER_BOTH);
 }
 
 
@@ -880,11 +914,12 @@ int main()
   init_udma_for_tlc();
 
   /*
-    Once we start the timers, we will get interrupts that sends data
+    Once we start the timer 1A, we will get interrupts that sends data
     to the TLCs and latch it. So we must do this after everything else
     is set up correctly.
   */
-  setup_pwm_GSCLK_n_timer();
+  setup_pwm_GSCLK23();
+  setup_pwm_GSCLK1_n_timer();
 
   for (;;) {
     static uint32_t prior_hall= 0xffffffffUL;
