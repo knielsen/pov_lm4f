@@ -27,6 +27,14 @@
 #define TLC_GS_BYTES (12 * LEDS_PER_TLC * NUM_TLC / 8)
 #define NUM_RGB_LEDS (NUM_TLC*LEDS_PER_TLC/3)
 
+/*
+  Useful for testing.
+  When defined, the actual hall sensor is ignored, instead it fakes that
+  the hall triggers with some reasonable frequency.
+*/
+#define FAKE_HALL_SENSOR 1
+/* Define to use only a single blade, for testing. */
+#define SINGLE_BLADE 1
 
 /*
   Current pinouts:
@@ -54,12 +62,77 @@
 #define LED_GREEN GPIO_PIN_3
 
 
-/*
-  Useful for testing.
-  When defined, the actual hall sensor is ignored, instead it fakes that
-  the hall triggers with some reasonable frequency.
-*/
-#define FAKE_HALL_SENSOR 1
+#define GPIO_MODE1_PERIPH SYSCTL_PERIPH_GPIOA
+#define GPIO_MODE1_BASE GPIO_PORTA_BASE
+#define GPIO_MODE1_PIN GPIO_PIN_7
+#define GPIO_MODE2_PERIPH SYSCTL_PERIPH_GPIOE
+#define GPIO_MODE2_BASE GPIO_PORTE_BASE
+#define GPIO_MODE2_PIN GPIO_PIN_0
+#define GPIO_MODE3_PERIPH SYSCTL_PERIPH_GPIOE
+#define GPIO_MODE3_BASE GPIO_PORTE_BASE
+#define GPIO_MODE3_PIN GPIO_PIN_3
+
+#define GPIO_XLAT1_PERIPH SYSCTL_PERIPH_GPIOA
+#define GPIO_XLAT1_BASE GPIO_PORTA_BASE
+#define GPIO_XLAT1_PIN GPIO_PIN_6
+#define GPIO_XLAT2_PERIPH SYSCTL_PERIPH_GPIOD
+#define GPIO_XLAT2_BASE GPIO_PORTD_BASE
+#define GPIO_XLAT2_PIN GPIO_PIN_6
+#define GPIO_XLAT3_PERIPH SYSCTL_PERIPH_GPIOE
+#define GPIO_XLAT3_BASE GPIO_PORTE_BASE
+#define GPIO_XLAT3_PIN GPIO_PIN_2
+
+#define GPIO_BLANK1_PERIPH SYSCTL_PERIPH_GPIOE
+#define GPIO_BLANK1_BASE GPIO_PORTE_BASE
+#define GPIO_BLANK1_PIN GPIO_PIN_1
+#define GPIO_BLANK2_PERIPH SYSCTL_PERIPH_GPIOE
+#define GPIO_BLANK2_BASE GPIO_PORTE_BASE
+#define GPIO_BLANK2_PIN GPIO_PIN_4
+#define GPIO_BLANK3_PERIPH SYSCTL_PERIPH_GPIOE
+#define GPIO_BLANK3_BASE GPIO_PORTE_BASE
+#define GPIO_BLANK3_PIN GPIO_PIN_5
+
+#define SSI_TLC1_PERIPH SYSCTL_PERIPH_SSI0
+#define SSI_TLC1_BASE SSI0_BASE
+#define SSI_TLC1_IO_PERIPH SYSCTL_PERIPH_GPIOA
+#define SSI_TLC1_IO_BASE GPIO_PORTA_BASE
+#define SSI_TLC1_INT INT_SSI0
+#define SSI_TLC1_DMA UDMA_CHANNEL_SSI0TX
+#define SSI_TLC1_DMA_CHAN_ASSIGN UDMA_CH11_SSI0TX
+#define SSI_TLC1_CLK_CFG GPIO_PA2_SSI0CLK
+#define SSI_TLC1_CLK_PIN GPIO_PIN_2
+#define SSI_TLC1_RX_CFG GPIO_PA4_SSI0RX
+#define SSI_TLC1_RX_PIN GPIO_PIN_4
+#define SSI_TLC1_TX_CFG GPIO_PA5_SSI0TX
+#define SSI_TLC1_TX_PIN GPIO_PIN_5
+
+#define SSI_TLC2_PERIPH SYSCTL_PERIPH_SSI2
+#define SSI_TLC2_BASE SSI2_BASE
+#define SSI_TLC2_IO_PERIPH SYSCTL_PERIPH_GPIOB
+#define SSI_TLC2_IO_BASE GPIO_PORTB_BASE
+#define SSI_TLC2_INT INT_SSI2
+#define SSI_TLC2_DMA_CHAN_ASSIGN UDMA_CH13_SSI2TX
+#define SSI_TLC2_DMA (SSI_TLC2_DMA_CHAN_ASSIGN & 0xff)
+#define SSI_TLC2_CLK_CFG GPIO_PB4_SSI2CLK
+#define SSI_TLC2_CLK_PIN GPIO_PIN_4
+#define SSI_TLC2_RX_CFG GPIO_PB6_SSI2RX
+#define SSI_TLC2_RX_PIN GPIO_PIN_6
+#define SSI_TLC2_TX_CFG GPIO_PB7_SSI2TX
+#define SSI_TLC2_TX_PIN GPIO_PIN_7
+
+#define SSI_TLC3_PERIPH SYSCTL_PERIPH_SSI3
+#define SSI_TLC3_BASE SSI3_BASE
+#define SSI_TLC3_IO_PERIPH SYSCTL_PERIPH_GPIOD
+#define SSI_TLC3_IO_BASE GPIO_PORTD_BASE
+#define SSI_TLC3_INT INT_SSI3
+#define SSI_TLC3_DMA_CHAN_ASSIGN UDMA_CH15_SSI3TX
+#define SSI_TLC3_DMA (SSI_TLC3_DMA_CHAN_ASSIGN & 0xff)
+#define SSI_TLC3_CLK_CFG GPIO_PD0_SSI3CLK
+#define SSI_TLC3_CLK_PIN GPIO_PIN_0
+#define SSI_TLC3_RX_CFG GPIO_PD2_SSI3RX
+#define SSI_TLC3_RX_PIN GPIO_PIN_2
+#define SSI_TLC3_TX_CFG GPIO_PD3_SSI3TX
+#define SSI_TLC3_TX_PIN GPIO_PIN_3
 
 /* To change this, must fix clock setup in the code. */
 #define MCU_HZ 80000000
@@ -333,32 +406,67 @@ setup_pwm_GSCLK23(void)
 static void
 config_tlc_gpio(void)
 {
-  /* Setup GPIO pins for SSI0. */
-  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_SSI0);
-  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
-  ROM_GPIOPinConfigure(GPIO_PA2_SSI0CLK);
-  ROM_GPIOPinConfigure(GPIO_PA3_SSI0FSS);
-  ROM_GPIOPinConfigure(GPIO_PA4_SSI0RX);
-  ROM_GPIOPinConfigure(GPIO_PA5_SSI0TX);
-  ROM_GPIOPinTypeSSI(GPIO_PORTA_BASE, GPIO_PIN_5 | GPIO_PIN_4 | GPIO_PIN_3 |
-                     GPIO_PIN_2);
+  /* Setup GPIO pins for SSI to TLCs. */
+  ROM_SysCtlPeripheralEnable(SSI_TLC1_PERIPH);
+  ROM_SysCtlPeripheralEnable(SSI_TLC1_IO_PERIPH);
+  ROM_GPIOPinConfigure(SSI_TLC1_CLK_CFG);
+  ROM_GPIOPinConfigure(SSI_TLC1_RX_CFG);
+  ROM_GPIOPinConfigure(SSI_TLC1_TX_CFG);
+  ROM_GPIOPinTypeSSI(SSI_TLC1_IO_BASE,
+                     SSI_TLC1_CLK_PIN | SSI_TLC1_RX_PIN | SSI_TLC1_TX_PIN);
+  ROM_SysCtlPeripheralEnable(SSI_TLC2_PERIPH);
+  ROM_SysCtlPeripheralEnable(SSI_TLC2_IO_PERIPH);
+  ROM_GPIOPinConfigure(SSI_TLC2_CLK_CFG);
+  ROM_GPIOPinConfigure(SSI_TLC2_RX_CFG);
+  ROM_GPIOPinConfigure(SSI_TLC2_TX_CFG);
+  ROM_GPIOPinTypeSSI(SSI_TLC2_IO_BASE,
+                     SSI_TLC2_CLK_PIN | SSI_TLC2_RX_PIN | SSI_TLC2_TX_PIN);
+  ROM_SysCtlPeripheralEnable(SSI_TLC3_PERIPH);
+  ROM_SysCtlPeripheralEnable(SSI_TLC3_IO_PERIPH);
+  ROM_GPIOPinConfigure(SSI_TLC3_CLK_CFG);
+  ROM_GPIOPinConfigure(SSI_TLC3_RX_CFG);
+  ROM_GPIOPinConfigure(SSI_TLC3_TX_CFG);
+  ROM_GPIOPinTypeSSI(SSI_TLC3_IO_BASE,
+                     SSI_TLC3_CLK_PIN | SSI_TLC3_RX_PIN | SSI_TLC3_TX_PIN);
 
-  /* Setup PA6 and PA7 for XLAT and MODE. */
-  ROM_GPIOPinTypeGPIOOutput(GPIO_PORTA_BASE, GPIO_PIN_6 | GPIO_PIN_7);
+  /* GPIO for XLAT and MODE. */
+  ROM_SysCtlPeripheralEnable(GPIO_XLAT1_PERIPH);
+  ROM_GPIOPinTypeGPIOOutput(GPIO_XLAT1_BASE, GPIO_XLAT1_PIN);
+  ROM_SysCtlPeripheralEnable(GPIO_MODE1_PERIPH);
+  ROM_GPIOPinTypeGPIOOutput(GPIO_MODE1_BASE, GPIO_MODE1_PIN);
+  ROM_SysCtlPeripheralEnable(GPIO_XLAT2_PERIPH);
+  ROM_GPIOPinTypeGPIOOutput(GPIO_XLAT2_BASE, GPIO_XLAT2_PIN);
+  ROM_SysCtlPeripheralEnable(GPIO_MODE2_PERIPH);
+  ROM_GPIOPinTypeGPIOOutput(GPIO_MODE2_BASE, GPIO_MODE2_PIN);
+  ROM_SysCtlPeripheralEnable(GPIO_XLAT3_PERIPH);
+  ROM_GPIOPinTypeGPIOOutput(GPIO_XLAT3_BASE, GPIO_XLAT3_PIN);
+  ROM_SysCtlPeripheralEnable(GPIO_MODE3_PERIPH);
+  ROM_GPIOPinTypeGPIOOutput(GPIO_MODE3_BASE, GPIO_MODE3_PIN);
+
   /* Set XLAT low. */
-  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, 0);
+  ROM_GPIOPinWrite(GPIO_XLAT1_BASE, GPIO_XLAT1_PIN, 0);
+  ROM_GPIOPinWrite(GPIO_XLAT2_BASE, GPIO_XLAT2_PIN, 0);
+  ROM_GPIOPinWrite(GPIO_XLAT3_BASE, GPIO_XLAT3_PIN, 0);
   /* Set MODE low, to select GS mode. */
-  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_7, 0);
+  ROM_GPIOPinWrite(GPIO_MODE1_BASE, GPIO_MODE1_PIN, 0);
+  ROM_GPIOPinWrite(GPIO_MODE2_BASE, GPIO_MODE2_PIN, 0);
+  ROM_GPIOPinWrite(GPIO_MODE3_BASE, GPIO_MODE3_PIN, 0);
 
-  /* Setup PE1 for BLANK, pull it high initially. */
-  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOE);
-  ROM_GPIOPinTypeGPIOOutput(GPIO_PORTE_BASE, GPIO_PIN_1);
-  ROM_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_1, GPIO_PIN_1);
+  /* Setup BLANK, pull it high initially. */
+  ROM_SysCtlPeripheralEnable(GPIO_BLANK1_PERIPH);
+  ROM_GPIOPinTypeGPIOOutput(GPIO_BLANK1_BASE, GPIO_BLANK1_PIN);
+  ROM_GPIOPinWrite(GPIO_BLANK1_BASE, GPIO_BLANK1_PIN, GPIO_BLANK1_PIN);
+  ROM_SysCtlPeripheralEnable(GPIO_BLANK2_PERIPH);
+  ROM_GPIOPinTypeGPIOOutput(GPIO_BLANK2_BASE, GPIO_BLANK2_PIN);
+  ROM_GPIOPinWrite(GPIO_BLANK2_BASE, GPIO_BLANK2_PIN, GPIO_BLANK2_PIN);
+  ROM_SysCtlPeripheralEnable(GPIO_BLANK3_PERIPH);
+  ROM_GPIOPinTypeGPIOOutput(GPIO_BLANK3_BASE, GPIO_BLANK3_PIN);
+  ROM_GPIOPinWrite(GPIO_BLANK3_BASE, GPIO_BLANK3_PIN, GPIO_BLANK3_PIN);
 }
 
 
 static void
-config_spi_tlc_read(uint32_t bits_per_word)
+config_spi_tlc_read(uint32_t base, uint32_t bits_per_word)
 {
   /*
     Configure the SPI for correct mode to read from TLC5940.
@@ -373,14 +481,14 @@ config_spi_tlc_read(uint32_t bits_per_word)
     there may not.)
   */
 
-  ROM_SSIDisable(SSI0_BASE);
-  ROM_SSIConfigSetExpClk(SSI0_BASE, ROM_SysCtlClockGet(), SSI_FRF_MOTO_MODE_1,
+  ROM_SSIDisable(base);
+  ROM_SSIConfigSetExpClk(base, ROM_SysCtlClockGet(), SSI_FRF_MOTO_MODE_1,
                      SSI_MODE_MASTER, 20000000, bits_per_word);
-  ROM_SSIEnable(SSI0_BASE);
+  ROM_SSIEnable(base);
 }
 
 static void
-config_spi_tlc_write(uint32_t bits_per_word)
+config_spi_tlc_write(uint32_t base, uint32_t bits_per_word)
 {
   /*
     Configure the SPI for correct mode to write to TLC5940, and send
@@ -390,18 +498,20 @@ config_spi_tlc_write(uint32_t bits_per_word)
     We need to setup on the trailing, falling CLK edge, so SPH=0.
   */
 
-  ROM_SSIDisable(SSI0_BASE);
-  ROM_SSIConfigSetExpClk(SSI0_BASE, ROM_SysCtlClockGet(), SSI_FRF_MOTO_MODE_0,
+  ROM_SSIDisable(base);
+  ROM_SSIConfigSetExpClk(base, ROM_SysCtlClockGet(), SSI_FRF_MOTO_MODE_0,
                          SSI_MODE_MASTER, 20000000, bits_per_word);
-  ROM_SSIEnable(SSI0_BASE);
+  ROM_SSIEnable(base);
 }
 
 /*
-  Set the DC register on TLC5940 through SSI0.
+  Set the DC register on TLC5940 through SSI.
   Then read out the TLC5940 status register and check that DC is correct.
 */
 static void
-init_tlc_dc(uint8_t dc_value)
+init_tlc_dc(uint32_t ssi_base, uint8_t dc_value,
+            uint32_t mode_base, uint32_t mode_pin,
+            uint32_t xlat_base, uint32_t xlat_pin)
 {
   uint32_t data;
   uint32_t i;
@@ -410,57 +520,55 @@ init_tlc_dc(uint8_t dc_value)
   uint32_t error_retry_count=3;
   uint32_t dc_errors;
 
-  config_tlc_gpio();
-
 try_again:
   /* Prepare to write 6-bit DC words to TLC. */
-  config_spi_tlc_write(6);
+  config_spi_tlc_write(ssi_base, 6);
 
   /*
     Clock out an initial dummy byte, just to get the clock and data
     signals stable.
   */
-  ROM_SSIDataPut(SSI0_BASE, 0);
-  while (ROM_SSIBusy(SSI0_BASE))
+  ROM_SSIDataPut(ssi_base, 0);
+  while (ROM_SSIBusy(ssi_base))
     ;
   /* Drain the receive FIFO just so it does not get full. */
-  ROM_SSIDataGet(SSI0_BASE, &data);
+  ROM_SSIDataGet(ssi_base, &data);
 
   /* Set MODE high, to select DC mode. */
-  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_7, GPIO_PIN_7);
+  ROM_GPIOPinWrite(mode_base, mode_pin, mode_pin);
   ROM_SysCtlDelay(5);
 
   /* Write DC value (6 bits) to all 16 outputs and all 6 TLCs. */
   for (i = 0; i < LEDS_PER_TLC * NUM_TLC; ++i)
   {
-    ROM_SSIDataPut(SSI0_BASE, dc_value);
-    while (ROM_SSIBusy(SSI0_BASE))
+    ROM_SSIDataPut(ssi_base, dc_value);
+    while (ROM_SSIBusy(ssi_base))
       ;
     /* Drain the receive FIFO just so it does not get full. */
-    ROM_SSIDataGet(SSI0_BASE, &data);
+    ROM_SSIDataGet(ssi_base, &data);
   }
 
   /* Pulse XLAT so we get the DC values stored in the DC registers. */
   ROM_SysCtlDelay(5);
-  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, GPIO_PIN_6);
+  ROM_GPIOPinWrite(xlat_base, xlat_pin, xlat_pin);
   ROM_SysCtlDelay(5);
-  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, 0);
+  ROM_GPIOPinWrite(xlat_base, xlat_pin, 0);
   ROM_SysCtlDelay(5);
 
-  config_spi_tlc_read(8);
+  config_spi_tlc_read(ssi_base, 8);
 
   /* Set MODE low, to select GS mode. */
-  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_7, 0);
+  ROM_GPIOPinWrite(mode_base, mode_pin, 0);
   ROM_SysCtlDelay(5);
 
   /* Empty the receive FIFO. */
-  while(ROM_SSIDataGetNonBlocking(SSI0_BASE, &data))
+  while(ROM_SSIDataGetNonBlocking(ssi_base, &data))
     ;
 
   /* Pulse XLAT so we get the status register loaded into the shift register. */
-  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, GPIO_PIN_6);
+  ROM_GPIOPinWrite(xlat_base, xlat_pin, xlat_pin);
   ROM_SysCtlDelay(5);
-  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, 0);
+  ROM_GPIOPinWrite(xlat_base, xlat_pin, 0);
   ROM_SysCtlDelay(5);
 
   bits_collected = 0;
@@ -470,10 +578,10 @@ try_again:
   {
     uint32_t j;
 
-    ROM_SSIDataPut(SSI0_BASE, 0);
-    while (ROM_SSIBusy(SSI0_BASE))
+    ROM_SSIDataPut(ssi_base, 0);
+    while (ROM_SSIBusy(ssi_base))
       ;
-    ROM_SSIDataGet(SSI0_BASE, &data);
+    ROM_SSIDataGet(ssi_base, &data);
     serial_output_hexbyte(data);
     if ((i % (12*LEDS_PER_TLC/8)) == 2 || (i % (12*LEDS_PER_TLC/8)) == 14)
       ROM_UARTCharPut(UART0_BASE, ' ');
@@ -524,7 +632,7 @@ try_again:
   }
 
   /* Leave the SPI in GS write mode. */
-  config_spi_tlc_write(8);
+  config_spi_tlc_write(ssi_base, 8);
 }
 
 static uint32_t udma_control_block[256] __attribute__ ((aligned(1024)));
@@ -535,64 +643,63 @@ init_udma_for_tlc(void)
   ROM_uDMAEnable();
   ROM_uDMAControlBaseSet(udma_control_block);
 
-  ROM_SSIDMAEnable(SSI0_BASE, SSI_DMA_TX);
-  ROM_IntEnable(INT_SSI0);
+  ROM_SSIDMAEnable(SSI_TLC1_BASE, SSI_DMA_TX);
+  ROM_IntEnable(SSI_TLC1_INT);
+  ROM_SSIDMAEnable(SSI_TLC2_BASE, SSI_DMA_TX);
+  ROM_IntEnable(SSI_TLC2_INT);
+  ROM_SSIDMAEnable(SSI_TLC3_BASE, SSI_DMA_TX);
+  ROM_IntEnable(SSI_TLC3_INT);
 
-  ROM_uDMAChannelAttributeDisable(UDMA_CHANNEL_SSI0TX, UDMA_ATTR_ALTSELECT |
+  ROM_uDMAChannelAttributeDisable(SSI_TLC1_DMA, UDMA_ATTR_ALTSELECT |
                                   UDMA_ATTR_REQMASK | UDMA_ATTR_HIGH_PRIORITY);
-  ROM_uDMAChannelAttributeEnable(UDMA_CHANNEL_SSI0TX, UDMA_ATTR_USEBURST);
-  ROM_uDMAChannelControlSet(UDMA_CHANNEL_SSI0TX | UDMA_PRI_SELECT,
+  ROM_uDMAChannelAssign(SSI_TLC1_DMA_CHAN_ASSIGN);
+  ROM_uDMAChannelAttributeEnable(SSI_TLC1_DMA, UDMA_ATTR_USEBURST);
+  ROM_uDMAChannelControlSet(SSI_TLC1_DMA | UDMA_PRI_SELECT,
+                            UDMA_SIZE_8 | UDMA_SRC_INC_8 | UDMA_DST_INC_NONE |
+                            UDMA_ARB_4);
+
+  ROM_uDMAChannelAttributeDisable(SSI_TLC2_DMA, UDMA_ATTR_ALTSELECT |
+                                  UDMA_ATTR_REQMASK | UDMA_ATTR_HIGH_PRIORITY);
+  ROM_uDMAChannelAssign(SSI_TLC2_DMA_CHAN_ASSIGN);
+  ROM_uDMAChannelAttributeEnable(SSI_TLC2_DMA, UDMA_ATTR_USEBURST);
+  ROM_uDMAChannelControlSet(SSI_TLC2_DMA | UDMA_PRI_SELECT,
+                            UDMA_SIZE_8 | UDMA_SRC_INC_8 | UDMA_DST_INC_NONE |
+                            UDMA_ARB_4);
+
+  ROM_uDMAChannelAttributeDisable(SSI_TLC3_DMA, UDMA_ATTR_ALTSELECT |
+                                  UDMA_ATTR_REQMASK | UDMA_ATTR_HIGH_PRIORITY);
+  ROM_uDMAChannelAssign(SSI_TLC3_DMA_CHAN_ASSIGN);
+  ROM_uDMAChannelAttributeEnable(SSI_TLC3_DMA, UDMA_ATTR_USEBURST);
+  ROM_uDMAChannelControlSet(SSI_TLC3_DMA | UDMA_PRI_SELECT,
                             UDMA_SIZE_8 | UDMA_SRC_INC_8 | UDMA_DST_INC_NONE |
                             UDMA_ARB_4);
 }
 
-static volatile uint8_t ssi_udma_running = 0;
+static volatile uint8_t tlc1_udma_running = 0;
+static volatile uint8_t tlc2_udma_running = 0;
+static volatile uint8_t tlc3_udma_running = 0;
 
 static void
-wait_for_spi_to_tlcs(void)
+wait_for_spi_to_tlcs(volatile uint8_t *running_flag, uint32_t ssi_base)
 {
-  while (ssi_udma_running)
+  while (tlc1_udma_running)
     ;
-  while (ROM_SSIBusy(SSI0_BASE))
+  while (ROM_SSIBusy(ssi_base))
     ;
 }
 
 
  __attribute__ ((unused))
 static void
-start_shift_out_gs_to_tlc_udma(uint8_t *gs_data)
+start_shift_out_gs_to_tlc_udma(uint8_t *gs_data, uint32_t ssi_dma,
+                               uint32_t ssi_base,
+                               volatile uint8_t *running_flag)
 {
-  ROM_uDMAChannelTransferSet(UDMA_CHANNEL_SSI0TX | UDMA_PRI_SELECT,
-                             UDMA_MODE_BASIC,
-                             gs_data, (void *)(SSI0_BASE + SSI_O_DR),
+  ROM_uDMAChannelTransferSet(ssi_dma | UDMA_PRI_SELECT, UDMA_MODE_BASIC,
+                             gs_data, (void *)(ssi_base + SSI_O_DR),
                              TLC_GS_BYTES);
-  ssi_udma_running = 1;
-  ROM_uDMAChannelEnable(UDMA_CHANNEL_SSI0TX);
-}
-
-
-/*
-  Shift out an array of 12-bit grayscale data to the TLCs.
-
-  Assumes that GPIO and SSI has already been configured and that
-  VPRG (MODE) is already low to select GS mode.
-*/
- __attribute__ ((unused))
-static void
-shift_out_gs_to_tlc(uint8_t *gs_data)
-{
-  uint32_t data;
-  uint32_t i;
-
-  /* Write 12 bits of GS data to all 16 outputs on all 6 TLCs. */
-  for (i = 0; i < TLC_GS_BYTES; ++i)
-  {
-    ROM_SSIDataPut(SSI0_BASE, gs_data[i]);
-    while (ROM_SSIBusy(SSI0_BASE))
-      ;
-    /* Drain the receive FIFO just so it does not get full. */
-    ROM_SSIDataGet(SSI0_BASE, &data);
-  }
+  *running_flag = 1;
+  ROM_uDMAChannelEnable(ssi_dma);
 }
 
 
@@ -600,15 +707,20 @@ static void
 latch_data_to_tlcs(void)
 {
   /* Pulse XLAT while holding BLANK high to latch new GS data. */
-  ROM_SysCtlDelay(1);
-  ROM_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_1, GPIO_PIN_1);
-  ROM_SysCtlDelay(1);
-  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, GPIO_PIN_6);
-  ROM_SysCtlDelay(1);
-  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_6, 0);
-  ROM_SysCtlDelay(1);
-  ROM_GPIOPinWrite(GPIO_PORTE_BASE, GPIO_PIN_1, 0);
-  ROM_SysCtlDelay(1);
+  ROM_GPIOPinWrite(GPIO_BLANK1_BASE, GPIO_BLANK1_PIN, GPIO_BLANK1_PIN);
+  ROM_GPIOPinWrite(GPIO_BLANK2_BASE, GPIO_BLANK2_PIN, GPIO_BLANK2_PIN);
+  ROM_GPIOPinWrite(GPIO_BLANK3_BASE, GPIO_BLANK3_PIN, GPIO_BLANK3_PIN);
+
+  ROM_GPIOPinWrite(GPIO_XLAT1_BASE, GPIO_XLAT1_PIN, GPIO_XLAT1_PIN);
+  ROM_GPIOPinWrite(GPIO_XLAT2_BASE, GPIO_XLAT2_PIN, GPIO_XLAT2_PIN);
+  ROM_GPIOPinWrite(GPIO_XLAT3_BASE, GPIO_XLAT3_PIN, GPIO_XLAT3_PIN);
+  ROM_GPIOPinWrite(GPIO_XLAT1_BASE, GPIO_XLAT1_PIN, 0);
+  ROM_GPIOPinWrite(GPIO_XLAT2_BASE, GPIO_XLAT2_PIN, 0);
+  ROM_GPIOPinWrite(GPIO_XLAT3_BASE, GPIO_XLAT3_PIN, 0);
+
+  ROM_GPIOPinWrite(GPIO_BLANK1_BASE, GPIO_BLANK1_PIN, 0);
+  ROM_GPIOPinWrite(GPIO_BLANK2_BASE, GPIO_BLANK2_PIN, 0);
+  ROM_GPIOPinWrite(GPIO_BLANK3_BASE, GPIO_BLANK3_PIN, 0);
 }
 
 
@@ -751,14 +863,15 @@ led_stuff(void)
 
 static volatile uint8_t do_next_frame = 0;
 static volatile uint8_t current_tlc_frame_buf = 0;
-static uint8_t tlc_frame_buf[2][TLC_GS_BYTES];
+static uint8_t tlc1_frame_buf[2][TLC_GS_BYTES];
+static uint8_t tlc2_frame_buf[2][TLC_GS_BYTES];
+static uint8_t tlc3_frame_buf[2][TLC_GS_BYTES];
 
 void
 IntHandlerTimer2A(void)
 {
   uint8_t cur;
   static uint32_t anim_counter = 0;
-  uint8_t *frame_buf;
   uint32_t current_time, start_time, current_period;
   uint32_t estim_latch_time, estim_delta;
   float angle;
@@ -776,33 +889,26 @@ IntHandlerTimer2A(void)
     time to do one round of data until next timer interrupt. Eventually,
     we should detect this so we can fix it if it occurs, relax timing.)
   */
-  wait_for_spi_to_tlcs();
+  wait_for_spi_to_tlcs(&tlc1_udma_running, SSI_TLC1_BASE);
+  wait_for_spi_to_tlcs(&tlc2_udma_running, SSI_TLC2_BASE);
+  wait_for_spi_to_tlcs(&tlc3_udma_running, SSI_TLC3_BASE);
   latch_data_to_tlcs();
   current_time = HWREG(WTIMER0_BASE + TIMER_O_TAV);
   start_time = last_hall;
   current_period = last_hall_period;
 
   cur = current_tlc_frame_buf;
-  start_shift_out_gs_to_tlc_udma(tlc_frame_buf[cur]);
+  start_shift_out_gs_to_tlc_udma(tlc1_frame_buf[cur], SSI_TLC1_DMA,
+                                 SSI_TLC1_BASE, &tlc1_udma_running);
+  start_shift_out_gs_to_tlc_udma(tlc2_frame_buf[cur], SSI_TLC2_DMA,
+                                 SSI_TLC2_BASE, &tlc2_udma_running);
+  start_shift_out_gs_to_tlc_udma(tlc3_frame_buf[cur], SSI_TLC3_DMA,
+                                 SSI_TLC3_BASE, &tlc3_udma_running);
   cur = 1 - cur;
   current_tlc_frame_buf = cur;
 
   led_stuff();
   ++do_next_frame;
-
-  /*
-    Now do the next animation step.
-
-    Eventually, this should just be picking out the appropriate line from
-    the 2D buffer; then the main program will update the 2D buffer with the
-    real animation.
-  */
-  frame_buf = tlc_frame_buf[cur];
-
-  //anim1(frame_buf, anim_counter);
-  //anim2(frame_buf, anim_counter);
-  //anim3(frame_buf, anim_counter);
-  //anim4(frame_buf, anim_counter);
 
   /*
     Estimate the angle of rotation when the scanline we are about to generate
@@ -818,7 +924,9 @@ IntHandlerTimer2A(void)
   if (estim_delta > current_period)
     estim_delta = current_period;
   angle = (float)(2.0f*M_PI) * (float)estim_delta / (float)current_period;
-  bm_scanline(angle, 32, frame_buf);
+  bm_scanline(angle, 32, tlc1_frame_buf[cur]);
+  bm_scanline(angle+(M_PI*2.0f/3.0f), 32, tlc2_frame_buf[cur]);
+  bm_scanline(angle+(M_PI*4.0f/3.0f), 32, tlc3_frame_buf[cur]);
 
   ++anim_counter;
 
@@ -852,9 +960,27 @@ IntHandlerTimer2A(void)
 void
 IntHandlerSSI0(void)
 {
-  ROM_SSIIntClear(SSI0_BASE, ROM_SSIIntStatus(SSI0_BASE, 1));
-  if (!ROM_uDMAChannelIsEnabled(UDMA_CHANNEL_SSI0TX))
-    ssi_udma_running = 0;
+  ROM_SSIIntClear(SSI_TLC1_BASE, ROM_SSIIntStatus(SSI_TLC1_BASE, 1));
+  if (!ROM_uDMAChannelIsEnabled(SSI_TLC1_DMA))
+    tlc1_udma_running = 0;
+}
+
+
+void
+IntHandlerSSI2(void)
+{
+  ROM_SSIIntClear(SSI_TLC2_BASE, ROM_SSIIntStatus(SSI_TLC2_BASE, 1));
+  if (!ROM_uDMAChannelIsEnabled(SSI_TLC2_DMA))
+    tlc2_udma_running = 0;
+}
+
+
+void
+IntHandlerSSI3(void)
+{
+  ROM_SSIIntClear(SSI_TLC3_BASE, ROM_SSIIntStatus(SSI_TLC3_BASE, 1));
+  if (!ROM_uDMAChannelIsEnabled(SSI_TLC3_DMA))
+    tlc3_udma_running = 0;
 }
 
 
@@ -908,9 +1034,20 @@ int main()
                       (UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE |
                        UART_CONFIG_PAR_NONE));
 
+  config_tlc_gpio();
   /* A small delay seems to help before communicating with the TLCs. */
   ROM_SysCtlDelay(MCU_HZ/3/10);
-  init_tlc_dc(DC_VALUE);
+  init_tlc_dc(SSI_TLC1_BASE, DC_VALUE,
+              GPIO_MODE1_BASE, GPIO_MODE1_PIN,
+              GPIO_XLAT1_BASE, GPIO_XLAT1_PIN);
+#ifndef SINGLE_BLADE
+  init_tlc_dc(SSI_TLC2_BASE, DC_VALUE,
+              GPIO_MODE2_BASE, GPIO_MODE2_PIN,
+              GPIO_XLAT2_BASE, GPIO_XLAT2_PIN);
+  init_tlc_dc(SSI_TLC3_BASE, DC_VALUE,
+              GPIO_MODE3_BASE, GPIO_MODE3_PIN,
+              GPIO_XLAT3_BASE, GPIO_XLAT3_PIN);
+#endif
   init_udma_for_tlc();
 
   /*

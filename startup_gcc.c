@@ -46,6 +46,8 @@ extern int main(void);
 extern void IntHandlerWTimer0A(void);
 extern void IntHandlerTimer2A(void);
 extern void IntHandlerSSI0(void);
+extern void IntHandlerSSI2(void);
+extern void IntHandlerSSI3(void);
 
 //*****************************************************************************
 //
@@ -137,8 +139,8 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // GPIO Port J
     IntDefaultHandler,                      // GPIO Port K
     IntDefaultHandler,                      // GPIO Port L
-    IntDefaultHandler,                      // SSI2 Rx and Tx
-    IntDefaultHandler,                      // SSI3 Rx and Tx
+    IntHandlerSSI2,                         // SSI2 Rx and Tx
+    IntHandlerSSI3,                         // SSI3 Rx and Tx
     IntDefaultHandler,                      // UART3 Rx and Tx
     IntDefaultHandler,                      // UART4 Rx and Tx
     IntDefaultHandler,                      // UART5 Rx and Tx
