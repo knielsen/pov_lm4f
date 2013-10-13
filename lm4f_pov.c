@@ -31,21 +31,21 @@
 /*
   Current pinouts:
 
-  PB5  GSCLK (20MHz)
-  PA2  SCLK
-  PA4  SOUT
-  PA5  SIN
+                  PCB#1  PCB#2  PCB#3
+   SIN             PA5    PB7    PD3
+   GSCLK (20MHz)   PB1    PB2    PB3
+   MODE            PA7    PE0    PE3
+   SCLK            PA2    PB4    PD0
+   XLAT            PA6    PD6    PE2
+   BLANK           PE1    PE4    PE5
+   SOUT            PA4    PB6    PD2
 
-  PA6  XLAT
-  PA7  MODE
-  PE1  BLANK
+   HALL            PC4   (PC5)  (PC6)
 
-  PC4  HALL
-
-  micro-SD Card:  MISO  PD2 (white)
-                  MOSI  PD3 (green)
-                  CLK   PD0 (brown, middle)
-                  CS    PD1 (brown, right)
+  Nordic wireless: MISO  PF0 (white)
+                   MOSI  PF1 (green)
+                   CLK   PF2 (brown, middle)
+                   CS    PF3 (brown, right)
 
 */
 
@@ -255,41 +255,44 @@ IntHandlerWTimer0A(void)
 }
 
 
-/* Configure Timer1B to output a PWM signal for GSCLK. */
+/*
+  Configure Timer2B to output a PWM signal for GSCLK.
+  Timer2A triggers an interrupt at the end of each TLC5940 PWM period.
+*/
 static void
 setup_pwm_GSCLK_n_timer(void)
 {
   /* Enable the timer. */
-  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER1);
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER2);
   /* Enable the GPIO module for the timer pin. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
-  /* Configure PB5 to be I/O pin for timer 1 B. */
-  ROM_GPIOPinConfigure(GPIO_PB5_T1CCP1);
+  /* Configure PB1 to be I/O pin for timer 1 B. */
+  ROM_GPIOPinConfigure(GPIO_PB1_T2CCP1);
   /*
-    Configure PB5: direction controlled by hardware, 2mA drive strength,
+    Configure PB1: direction controlled by hardware, 2mA drive strength,
     normal drive (no pullup).
   */
-  ROM_GPIOPinTypeTimer(GPIO_PORTB_BASE, GPIO_PIN_5);
+  ROM_GPIOPinTypeTimer(GPIO_PORTB_BASE, GPIO_PIN_1);
   /* Configure 2 * 16-bit timer, B in PWM mode, A periodic. */
-  ROM_TimerConfigure(TIMER1_BASE, TIMER_CFG_SPLIT_PAIR |
+  ROM_TimerConfigure(TIMER2_BASE, TIMER_CFG_SPLIT_PAIR |
                      TIMER_CFG_A_PERIODIC | TIMER_CFG_B_PWM);
   /*
-    Set timer1B start and compare values.
+    Set timer2B start and compare values.
     High at 3, low at 1 -> 80MHz/4 = 20MHz clock.
   */
-  ROM_TimerLoadSet(TIMER1_BASE, TIMER_B, 3);
-  ROM_TimerMatchSet(TIMER1_BASE, TIMER_B, 1);
+  ROM_TimerLoadSet(TIMER2_BASE, TIMER_B, 3);
+  ROM_TimerMatchSet(TIMER2_BASE, TIMER_B, 1);
 
   /* Set timer interrupt at GSCLK PWM period. */
-  ROM_TimerLoadSet(TIMER1_BASE, TIMER_A, 4*4096);
+  ROM_TimerLoadSet(TIMER2_BASE, TIMER_A, 4*4096);
 
   /* Enable interrrupts. */
   ROM_IntMasterEnable();
-  ROM_TimerIntEnable(TIMER1_BASE, TIMER_TIMA_TIMEOUT);
-  ROM_IntEnable(INT_TIMER1A);
+  ROM_TimerIntEnable(TIMER2_BASE, TIMER_TIMA_TIMEOUT);
+  ROM_IntEnable(INT_TIMER2A);
 
   /* Start the timer. */
-  ROM_TimerEnable(TIMER1_BASE, TIMER_BOTH);
+  ROM_TimerEnable(TIMER2_BASE, TIMER_BOTH);
 }
 
 
@@ -717,7 +720,7 @@ static volatile uint8_t current_tlc_frame_buf = 0;
 static uint8_t tlc_frame_buf[2][TLC_GS_BYTES];
 
 void
-IntHandlerTimer1A(void)
+IntHandlerTimer2A(void)
 {
   uint8_t cur;
   static uint32_t anim_counter = 0;
@@ -730,7 +733,7 @@ IntHandlerTimer1A(void)
   static uint32_t fake_hall_counter = 0;
 #endif
 
-  ROM_TimerIntClear(TIMER1_BASE, TIMER_TIMA_TIMEOUT);
+  ROM_TimerIntClear(TIMER2_BASE, TIMER_TIMA_TIMEOUT);
 
   /*
     Latch in the new data. Be sure to wait first for it to be ready.
