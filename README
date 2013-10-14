@@ -2,3 +2,7 @@ Firmware for POV project.
 Requires arm-none-eabi GCC/toolchain and TI headers.
 
 License: GPL, v2 or later.
+
+NOTE: When using the Stellaris/Tiva Launchpad, it is necessary to
+de-solder the 0-ohms resistors R9 and R10. Otherwise they create a
+short between the pins used by SSI2 and SSI3 and things will not work.

@@ -34,7 +34,7 @@
 */
 #define FAKE_HALL_SENSOR 1
 /* Define to use only a single blade, for testing. */
-#define SINGLE_BLADE 1
+//#define SINGLE_BLADE 1
 
 /*
   Current pinouts:
@@ -414,6 +414,7 @@ config_tlc_gpio(void)
   ROM_GPIOPinConfigure(SSI_TLC1_TX_CFG);
   ROM_GPIOPinTypeSSI(SSI_TLC1_IO_BASE,
                      SSI_TLC1_CLK_PIN | SSI_TLC1_RX_PIN | SSI_TLC1_TX_PIN);
+
   ROM_SysCtlPeripheralEnable(SSI_TLC2_PERIPH);
   ROM_SysCtlPeripheralEnable(SSI_TLC2_IO_PERIPH);
   ROM_GPIOPinConfigure(SSI_TLC2_CLK_CFG);
@@ -421,6 +422,7 @@ config_tlc_gpio(void)
   ROM_GPIOPinConfigure(SSI_TLC2_TX_CFG);
   ROM_GPIOPinTypeSSI(SSI_TLC2_IO_BASE,
                      SSI_TLC2_CLK_PIN | SSI_TLC2_RX_PIN | SSI_TLC2_TX_PIN);
+
   ROM_SysCtlPeripheralEnable(SSI_TLC3_PERIPH);
   ROM_SysCtlPeripheralEnable(SSI_TLC3_IO_PERIPH);
   ROM_GPIOPinConfigure(SSI_TLC3_CLK_CFG);
@@ -1037,17 +1039,21 @@ int main()
   config_tlc_gpio();
   /* A small delay seems to help before communicating with the TLCs. */
   ROM_SysCtlDelay(MCU_HZ/3/10);
+  serial_output_str("Loading TLC 1...\r\n");
   init_tlc_dc(SSI_TLC1_BASE, DC_VALUE,
               GPIO_MODE1_BASE, GPIO_MODE1_PIN,
               GPIO_XLAT1_BASE, GPIO_XLAT1_PIN);
 #ifndef SINGLE_BLADE
+  serial_output_str("Loading TLC 2...\r\n");
   init_tlc_dc(SSI_TLC2_BASE, DC_VALUE,
               GPIO_MODE2_BASE, GPIO_MODE2_PIN,
               GPIO_XLAT2_BASE, GPIO_XLAT2_PIN);
+  serial_output_str("Loading TLC 3...\r\n");
   init_tlc_dc(SSI_TLC3_BASE, DC_VALUE,
               GPIO_MODE3_BASE, GPIO_MODE3_PIN,
               GPIO_XLAT3_BASE, GPIO_XLAT3_PIN);
 #endif
+  serial_output_str("TLC load ok!\r\n");
   init_udma_for_tlc();
 
   /*
