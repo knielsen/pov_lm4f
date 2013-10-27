@@ -12,10 +12,13 @@
 /* Round up to a whole number of 32-bit words. */
 #define BM_SIZE_BYTES ((BM_SIZE_X*BM_SIZE_Y*BM_BITS + 31)/32*4)
 
-static uint8_t bitmap[BM_SIZE_BYTES];
+static uint8_t bitmap_array[3][BM_SIZE_BYTES];
+static uint32_t render_idx = 0;
+static uint32_t receive_idx = 1;
+
 
 static inline uint16_t
-bm_get_pixel(uint32_t x, uint32_t y)
+bm_get_pixel(uint8_t *bitmap, uint32_t x, uint32_t y)
 {
   uint32_t pix_idx = y*BM_SIZE_X + x;
   uint32_t byte_idx = pix_idx + (pix_idx/2);
@@ -29,7 +32,7 @@ bm_get_pixel(uint32_t x, uint32_t y)
 
 
 static inline void
-bm_put_pixel(uint16_t x, uint16_t y, uint16_t packed_col)
+bm_put_pixel(uint8_t *bitmap, uint16_t x, uint16_t y, uint16_t packed_col)
 {
   uint32_t pix_idx = y*BM_SIZE_X + x;
   uint32_t byte_idx = pix_idx + (pix_idx/2);
@@ -41,11 +44,11 @@ bm_put_pixel(uint16_t x, uint16_t y, uint16_t packed_col)
 }
 
 static void
-bm_put_pixel_check(uint16_t x, uint16_t y, uint16_t packed_col)
+bm_put_pixel_check(uint8_t *bitmap, uint16_t x, uint16_t y, uint16_t packed_col)
 {
-  bm_put_pixel(x, y, packed_col);
+  bm_put_pixel(bitmap, x, y, packed_col);
 #ifdef CHECK_PIXEL_PUT_GET
-  if (bm_get_pixel(x, y) == packed_col)
+  if (bm_get_pixel(bitmap, x, y) == packed_col)
     return;
   for (;;)
     ;
@@ -88,6 +91,7 @@ unpack_b(uint16_t packed)
 void
 bm_scanline(float angle, int32_t n, uint8_t *scanline_buf)
 {
+  uint8_t *bitmap = &bitmap_array[render_idx][0];
   /* The distiance between samples for two LEDs next to each other. */
   static const float step = 1.0f;
   /* The distance from the center to the first LED. */
@@ -127,7 +131,7 @@ bm_scanline(float angle, int32_t n, uint8_t *scanline_buf)
     uint16_t packed1, packed2;
     uint32_t first1, first2, last1, last2;
 
-    packed1 = bm_get_pixel((uint32_t)cx, (uint32_t)cy);
+    packed1 = bm_get_pixel(bitmap, (uint32_t)cx, (uint32_t)cy);
     first1 = tlc_lookup_even[packed1][0];
     last1 = tlc_lookup_even[packed1][1];
     *(uint32_t *)scanline_buf = first1;
@@ -135,7 +139,7 @@ bm_scanline(float angle, int32_t n, uint8_t *scanline_buf)
     cx -= dx;
     cy -= dy;
 
-    packed2 = bm_get_pixel((uint32_t)cx, (uint32_t)cy);
+    packed2 = bm_get_pixel(bitmap, (uint32_t)cx, (uint32_t)cy);
     first2 = tlc_lookup_odd[packed2][0];
     last2 = tlc_lookup_odd[packed2][1];
     *(uint32_t *)scanline_buf = last1 | first2;
@@ -148,20 +152,53 @@ bm_scanline(float angle, int32_t n, uint8_t *scanline_buf)
 }
 
 
- __attribute__ ((unused))
+static uint8_t last_run_num = 0;
+
+void
+accept_packet(uint8_t *packet)
+{
+  uint8_t *buf;
+  uint32_t i, offset;
+  uint8_t run_num = packet[0];
+  if (run_num < last_run_num)
+  {
+    /* Full frame received, though last packet was lost. */
+    receive_idx = (receive_idx+1)%3;
+    render_idx = (render_idx+1)%3;
+  }
+
+  /* Copy the received bytes into the appropriate place in the bitmap. */
+  buf = &bitmap_array[receive_idx][0];
+  offset = (uint32_t)run_num * 31;
+  for (i = 0; i < 31 && i+offset < BM_SIZE_BYTES; ++i)
+    buf[i+offset] = packet[i+1];
+
+  if (run_num == 204)
+  {
+    /* We received the last packet of a frame. Move to the next one. */
+    receive_idx = (receive_idx+1)%3;
+    render_idx = (render_idx+1)%3;
+  }
+
+  last_run_num = run_num;
+}
+
+
+__attribute__ ((unused))
 static void
-bm_clear(void)
+bm_clear(uint8_t *bitmap)
 {
   uint16_t x, y;
   for (x = 0; x < BM_SIZE_X; ++x)
     for (y = 0; y < BM_SIZE_Y; ++y)
-      bm_put_pixel(x, y, pack_col(0, 0, 0));
+      bm_put_pixel(bitmap, x, y, pack_col(0, 0, 0));
 }
 
 
- __attribute__ ((unused))
+__attribute__ ((unused))
 static void
-bm_put_disk(int32_t cx, int32_t cy, int32_t r, uint16_t packed_col)
+bm_put_disk(uint8_t *bitmap, int32_t cx, int32_t cy, int32_t r,
+            uint16_t packed_col)
 {
   int16_t x, y;
 
@@ -170,7 +207,7 @@ bm_put_disk(int32_t cx, int32_t cy, int32_t r, uint16_t packed_col)
       if (x >= 0 && x < BM_SIZE_X &&
           y >= 0 && y < BM_SIZE_Y &&
           (cx-x)*(cx-x) + (cy-y)*(cy-y) <= r*r)
-        bm_put_pixel_check(x, y, packed_col);
+        bm_put_pixel_check(bitmap, x, y, packed_col);
 }
 
 void
@@ -181,11 +218,15 @@ generate_test_image(void)
 */
   static const uint16_t r = 10;
   static const uint16_t d = 15;
+  uint8_t *bitmap = &bitmap_array[render_idx][0];
 
-  bm_clear();
-  bm_put_disk(BM_SIZE_X/2, BM_SIZE_Y/2+d, r, pack_col(15, 0, 0));
-  bm_put_disk(BM_SIZE_X/2 + d*0.866f, BM_SIZE_Y/2 - d*0.5f, r, pack_col(0, 15, 0));
-  bm_put_disk(BM_SIZE_X/2 - d*0.866f, BM_SIZE_Y/2 - d*0.5f, r, pack_col(0, 0, 15));
+  bm_clear(bitmap);
+  bm_put_disk(bitmap, BM_SIZE_X/2, BM_SIZE_Y/2+d, r,
+              pack_col(15, 0, 0));
+  bm_put_disk(bitmap, BM_SIZE_X/2 + d*0.866f, BM_SIZE_Y/2 - d*0.5f, r,
+              pack_col(0, 15, 0));
+  bm_put_disk(bitmap, BM_SIZE_X/2 - d*0.866f, BM_SIZE_Y/2 - d*0.5f, r,
+              pack_col(0, 0, 15));
 
 /*
   Colour gradients.

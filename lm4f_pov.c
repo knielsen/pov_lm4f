@@ -1464,6 +1464,7 @@ static volatile uint32_t packets_received_count = 0;
 static void
 my_recv_cb(uint8_t *packet, void *data)
 {
+  accept_packet(packet);
   ++packets_received_count;
 }
 
