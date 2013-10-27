@@ -49,6 +49,8 @@ extern void IntHandlerSSI0(void);
 extern void IntHandlerSSI2(void);
 extern void IntHandlerSSI3(void);
 extern void IntHandlerDMA(void);
+extern void IntHandlerGPIOf(void);
+extern void IntHandlerSSI1(void);
 
 //*****************************************************************************
 //
@@ -113,11 +115,11 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // Analog Comparator 2
     IntDefaultHandler,                      // System Control (PLL, OSC, BO)
     IntDefaultHandler,                      // FLASH Control
-    IntDefaultHandler,                      // GPIO Port F
+    IntHandlerGPIOf,                        // GPIO Port F
     IntDefaultHandler,                      // GPIO Port G
     IntDefaultHandler,                      // GPIO Port H
     IntDefaultHandler,                      // UART2 Rx and Tx
-    IntDefaultHandler,                      // SSI1 Rx and Tx
+    IntHandlerSSI1,                         // SSI1 Rx and Tx
     IntDefaultHandler,                      // Timer 3 subtimer A
     IntDefaultHandler,                      // Timer 3 subtimer B
     IntDefaultHandler,                      // I2C1 Master and Slave
