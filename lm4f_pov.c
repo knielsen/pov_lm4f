@@ -50,16 +50,16 @@
 
    HALL            PC4   (PC5)  (PC6)
 
-  Nordic wireless: MISO  PF0 (white)
-                   MOSI  PF1 (green)
-                   CLK   PF2 (brown, middle)
-                   CS    PF3 (brown, right)
+  nRF24L01 pinout:
 
+  Rx:
+    PF2  SCK        GND *1 2. VCC
+    PF3  CSN        PB0 .3 4. PF3
+    PF0  MISO       PF2 .5 6. PF1
+    PF1  MOSI       PF0 .7 8. PF4
+    PB0  CE
+    PF4  IRQ
 */
-
-#define LED_RED GPIO_PIN_1
-#define LED_BLUE GPIO_PIN_2
-#define LED_GREEN GPIO_PIN_3
 
 
 #define GPIO_MODE1_PERIPH SYSCTL_PERIPH_GPIOA
@@ -623,13 +623,9 @@ try_again:
       --error_retry_count;
       goto try_again;
     }
-    /* Flash the red LED endlessly to complain. */
+    serial_output_str("All retries failed to correctly load TLC, giving up.\r\n");
     for (;;)
     {
-      ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE, LED_RED);
-      ROM_SysCtlDelay(40000000/3);
-      ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE, 0);
-      ROM_SysCtlDelay(40000000/3);
     }
   }
 
@@ -848,21 +844,6 @@ anim4(uint8_t *buf, uint32_t count)
 }
 
 
-static void
-led_stuff(void)
-{
-  static uint32_t counter = 0;
-
-  /* Flash the LED a bit. */
-  if (counter == 0 || counter == 300)
-    ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_BLUE,
-                     ROM_GPIOPinRead(GPIO_PORTF_BASE, LED_BLUE) ^ LED_BLUE);
-  ++counter;
-  if (counter == MCU_HZ/4/4096)
-    counter = 0;
-}
-
-
 static volatile uint8_t do_next_frame = 0;
 static volatile uint8_t current_tlc_frame_buf = 0;
 static uint8_t tlc1_frame_buf[2][TLC_GS_BYTES];
@@ -909,7 +890,6 @@ IntHandlerTimer2A(void)
   cur = 1 - cur;
   current_tlc_frame_buf = cur;
 
-  led_stuff();
   ++do_next_frame;
 
   /*
@@ -931,14 +911,6 @@ IntHandlerTimer2A(void)
   bm_scanline(angle+(M_PI*4.0f/3.0f), 32, tlc3_frame_buf[cur]);
 
   ++anim_counter;
-
-  /* Show the status of the HALL sensor. */
-#ifndef FAKE_HALL_SENSOR
-  if (ROM_GPIOPinRead(GPIO_PORTC_BASE, GPIO_PIN_4))
-    ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN, LED_GREEN);
-  else
-    ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN, LED_RED);
-#endif
 
   /* Restart HALL capture a little while after last event. */
   tmp = hall_capture_delay;
@@ -1015,16 +987,12 @@ int main()
   /* Use the full 80MHz system clock. */
   ROM_SysCtlClockSet(SYSCTL_SYSDIV_2_5 | SYSCTL_USE_PLL |
                      SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
+  ROM_FPULazyStackingEnable();
 
   generate_test_image();
 
   /* Setup GPIO to read HALL sensor. */
   setup_hall_gpio_n_timer();
-
-  /* Configure LED GPIOs. */
-  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
-  ROM_GPIOPinTypeGPIOOutput(GPIO_PORTF_BASE, LED_RED|LED_BLUE|LED_GREEN);
-  ROM_GPIOPinWrite(GPIO_PORTF_BASE, LED_RED|LED_GREEN|LED_BLUE, 0);
 
   /* Configure serial. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
