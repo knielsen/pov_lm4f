@@ -48,6 +48,7 @@ extern void IntHandlerTimer2A(void);
 extern void IntHandlerSSI0(void);
 extern void IntHandlerSSI2(void);
 extern void IntHandlerSSI3(void);
+extern void IntHandlerDMA(void);
 
 //*****************************************************************************
 //
@@ -128,7 +129,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // Hibernate
     IntDefaultHandler,                      // USB0
     IntDefaultHandler,                      // PWM Generator 3
-    IntDefaultHandler,                      // uDMA Software Transfer
+    IntHandlerDMA,                          // uDMA Software Transfer
     IntDefaultHandler,                      // uDMA Error
     IntDefaultHandler,                      // ADC1 Sequence 0
     IntDefaultHandler,                      // ADC1 Sequence 1

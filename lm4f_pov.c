@@ -9,6 +9,7 @@
 #include "inc/hw_ints.h"
 #include "inc/hw_ssi.h"
 #include "inc/hw_timer.h"
+#include "inc/hw_nvic.h"
 #include "driverlib/gpio.h"
 #include "driverlib/rom.h"
 #include "driverlib/sysctl.h"
@@ -849,6 +850,7 @@ static volatile uint8_t current_tlc_frame_buf = 0;
 static uint8_t tlc1_frame_buf[2][TLC_GS_BYTES];
 static uint8_t tlc2_frame_buf[2][TLC_GS_BYTES];
 static uint8_t tlc3_frame_buf[2][TLC_GS_BYTES];
+static float scanline_angle;
 
 void
 IntHandlerTimer2A(void)
@@ -857,7 +859,6 @@ IntHandlerTimer2A(void)
   static uint32_t anim_counter = 0;
   uint32_t current_time, start_time, current_period;
   uint32_t estim_latch_time, estim_delta;
-  float angle;
   uint32_t tmp;
 #ifdef FAKE_HALL_SENSOR
   static uint32_t fake_hall_counter = 0;
@@ -905,10 +906,13 @@ IntHandlerTimer2A(void)
     current_period = 1;
   if (estim_delta > current_period)
     estim_delta = current_period;
-  angle = (float)(2.0f*M_PI) * (float)estim_delta / (float)current_period;
-  bm_scanline(angle, 32, tlc1_frame_buf[cur]);
-  bm_scanline(angle+(M_PI*2.0f/3.0f), 32, tlc2_frame_buf[cur]);
-  bm_scanline(angle+(M_PI*4.0f/3.0f), 32, tlc3_frame_buf[cur]);
+  scanline_angle =
+    (float)(2.0f*M_PI) * (float)estim_delta / (float)current_period;
+  /*
+    Trigger a software-interrupt to perform the actual scanline generation.
+    (This is time-consuming, so we want it to be pre-emptable).
+  */
+  HWREG(NVIC_SW_TRIG) = INT_UDMA - 16;
 
   ++anim_counter;
 
@@ -928,6 +932,24 @@ IntHandlerTimer2A(void)
     record_hall_sensor(current_time);
   }
 #endif
+}
+
+
+void
+IntHandlerDMA(void)
+{
+  uint8_t cur;
+  /*
+    This is not really related to DMA.
+
+    We just use this as an available interrupt to do software-triggered,
+    low-priority interrupt so that we can be pre-empted while handling the
+    scanline conversion (which is time-consuming).
+  */
+  cur = current_tlc_frame_buf;
+  bm_scanline(scanline_angle, 32, tlc1_frame_buf[cur]);
+  bm_scanline(scanline_angle+(M_PI*2.0f/3.0f), 32, tlc2_frame_buf[cur]);
+  bm_scanline(scanline_angle+(M_PI*4.0f/3.0f), 32, tlc3_frame_buf[cur]);
 }
 
 
@@ -1003,6 +1025,32 @@ int main()
   ROM_UARTConfigSetExpClk(UART0_BASE, (ROM_SysCtlClockGet()), 115200,
                       (UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE |
                        UART_CONFIG_PAR_NONE));
+
+  /* Set interrupts to use no sub-priorities. */
+  ROM_IntPriorityGroupingSet(7);
+  /*
+    Setup the priorities of the interrupts we use.
+
+    The interrupts associated with the latching to TLCs and the Hall sensor(s)
+    have the highest priorities.
+
+    The interrupts for nRF24L01+ wireless reception have medium prio (the
+    nRF24L01+ has a three-level fifo, so latency is not critical).
+
+    We use uDMA software request interrupt as a low-priority software-triggered
+    interrupt so that a high-prio interrupt can yield to a lower-prio one
+    to allow preemption (used for scanline conversion which consumes a lot of
+    CPU).
+  */
+  ROM_IntPrioritySet(INT_WTIMER0A, 0 << 5);
+  ROM_IntPrioritySet(INT_TIMER2A, 0 << 5);
+  ROM_IntPrioritySet(INT_SSI0, 0 << 5);
+  ROM_IntPrioritySet(INT_SSI2, 0 << 5);
+  ROM_IntPrioritySet(INT_SSI3, 0 << 5);
+  ROM_IntPrioritySet(INT_GPIOF, 4 << 5);
+  ROM_IntPrioritySet(INT_SSI1, 4 << 5);
+  ROM_IntPrioritySet(INT_UDMA, 7 << 5);
+  ROM_IntEnable(INT_UDMA);
 
   config_tlc_gpio();
   /* A small delay seems to help before communicating with the TLCs. */
