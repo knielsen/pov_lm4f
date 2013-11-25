@@ -42,14 +42,14 @@
 
                   PCB#1  PCB#2  PCB#3
    SIN             PA5    PB7    PD3
-   GSCLK (20MHz)   PB1    PB2    PB3
-   MODE            PA7    PE0    PE3
+   GSCLK (20MHz)   PC4    PF4    PB5
+   MODE            PA6    PC7    PD1
    SCLK            PA2    PB4    PD0
-   XLAT            PA6    PD6    PE2
-   BLANK           PE1    PE4    PE5
+   XLAT            PA3    PE2    PE4
+   BLANK           PC6    PE3    PE5
    SOUT            PA4    PB6    PD2
 
-   HALL            PC4   (PC5)  (PC6)
+   HALL            PC5   (PD7)  (PD6)
 
   nRF24L01 pinout:
 
@@ -58,37 +58,37 @@
     PF3  CSN        PB0 .3 4. PF3
     PF0  MISO       PF2 .5 6. PF1
     PF1  MOSI       PF0 .7 8. PF4
-    PB0  CE
-    PF4  IRQ
+    PB0  IRQ
+    PB3  CE
 */
 
 
 #define GPIO_MODE1_PERIPH SYSCTL_PERIPH_GPIOA
 #define GPIO_MODE1_BASE GPIO_PORTA_BASE
-#define GPIO_MODE1_PIN GPIO_PIN_7
-#define GPIO_MODE2_PERIPH SYSCTL_PERIPH_GPIOE
-#define GPIO_MODE2_BASE GPIO_PORTE_BASE
-#define GPIO_MODE2_PIN GPIO_PIN_0
-#define GPIO_MODE3_PERIPH SYSCTL_PERIPH_GPIOE
-#define GPIO_MODE3_BASE GPIO_PORTE_BASE
-#define GPIO_MODE3_PIN GPIO_PIN_3
+#define GPIO_MODE1_PIN GPIO_PIN_6
+#define GPIO_MODE2_PERIPH SYSCTL_PERIPH_GPIOC
+#define GPIO_MODE2_BASE GPIO_PORTC_BASE
+#define GPIO_MODE2_PIN GPIO_PIN_7
+#define GPIO_MODE3_PERIPH SYSCTL_PERIPH_GPIOD
+#define GPIO_MODE3_BASE GPIO_PORTD_BASE
+#define GPIO_MODE3_PIN GPIO_PIN_1
 
 #define GPIO_XLAT1_PERIPH SYSCTL_PERIPH_GPIOA
 #define GPIO_XLAT1_BASE GPIO_PORTA_BASE
-#define GPIO_XLAT1_PIN GPIO_PIN_6
-#define GPIO_XLAT2_PERIPH SYSCTL_PERIPH_GPIOD
-#define GPIO_XLAT2_BASE GPIO_PORTD_BASE
-#define GPIO_XLAT2_PIN GPIO_PIN_6
+#define GPIO_XLAT1_PIN GPIO_PIN_3
+#define GPIO_XLAT2_PERIPH SYSCTL_PERIPH_GPIOE
+#define GPIO_XLAT2_BASE GPIO_PORTE_BASE
+#define GPIO_XLAT2_PIN GPIO_PIN_2
 #define GPIO_XLAT3_PERIPH SYSCTL_PERIPH_GPIOE
 #define GPIO_XLAT3_BASE GPIO_PORTE_BASE
-#define GPIO_XLAT3_PIN GPIO_PIN_2
+#define GPIO_XLAT3_PIN GPIO_PIN_4
 
-#define GPIO_BLANK1_PERIPH SYSCTL_PERIPH_GPIOE
-#define GPIO_BLANK1_BASE GPIO_PORTE_BASE
-#define GPIO_BLANK1_PIN GPIO_PIN_1
+#define GPIO_BLANK1_PERIPH SYSCTL_PERIPH_GPIOC
+#define GPIO_BLANK1_BASE GPIO_PORTC_BASE
+#define GPIO_BLANK1_PIN GPIO_PIN_6
 #define GPIO_BLANK2_PERIPH SYSCTL_PERIPH_GPIOE
 #define GPIO_BLANK2_BASE GPIO_PORTE_BASE
-#define GPIO_BLANK2_PIN GPIO_PIN_4
+#define GPIO_BLANK2_PIN GPIO_PIN_3
 #define GPIO_BLANK3_PERIPH SYSCTL_PERIPH_GPIOE
 #define GPIO_BLANK3_BASE GPIO_PORTE_BASE
 #define GPIO_BLANK3_PIN GPIO_PIN_5
@@ -269,13 +269,20 @@ println_float(float f, uint32_t dig_before, uint32_t dig_after)
 }
 
 
+/*
+  Configure wtimer0a to output a PWM signal for gsclk1 on PC4.
+  Configure wtimer0b for capture of the hall1 sensor on PC5.
+*/
 static void
-setup_hall_gpio_n_timer(void)
+setup_hall_gpio_n_gsclk1(void)
 {
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_WTIMER0);
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOC);
   ROM_GPIOPinConfigure(GPIO_PC4_WT0CCP0);
-  ROM_GPIOPinTypeTimer(GPIO_PORTC_BASE, GPIO_PIN_4);
+  ROM_GPIOPinConfigure(GPIO_PC5_WT0CCP1);
+  ROM_GPIOPinTypeTimer(GPIO_PORTC_BASE, GPIO_PIN_4|GPIO_PIN_5);
+  ROM_GPIOPadConfigSet(GPIO_PORTC_BASE, GPIO_PIN_4, GPIO_STRENGTH_8MA,
+                       GPIO_PIN_TYPE_STD);
 
   /*
     I could not get the timer capture to work in count-up mode.
@@ -283,16 +290,24 @@ setup_hall_gpio_n_timer(void)
     I did not see this anywhere in the datasheet...
   */
 
-  ROM_TimerConfigure(WTIMER0_BASE, TIMER_CFG_SPLIT_PAIR | TIMER_CFG_A_CAP_TIME);
-  ROM_TimerLoadSet(WTIMER0_BASE, TIMER_A, 0xffffffffUL);
-  ROM_TimerMatchSet(WTIMER0_BASE, TIMER_A, 0);
-  ROM_TimerControlEvent(WTIMER0_BASE, TIMER_A, TIMER_EVENT_POS_EDGE);
+  ROM_TimerConfigure(WTIMER0_BASE, TIMER_CFG_SPLIT_PAIR |
+                     TIMER_CFG_A_PWM | TIMER_CFG_B_CAP_TIME);
+  /*
+    Set wtimer0A start and compare values.
+    High at 3, low at 1 -> 80MHz/4 = 20MHz clock.
+  */
+  ROM_TimerLoadSet(WTIMER0_BASE, TIMER_A, 3);
+  ROM_TimerMatchSet(WTIMER0_BASE, TIMER_A, 1);
+  /* Set wtimer0B to count the full 32-bit range ffffffff..0 */
+  ROM_TimerLoadSet(WTIMER0_BASE, TIMER_B, 0xffffffffUL);
+  ROM_TimerMatchSet(WTIMER0_BASE, TIMER_B, 0);
+  ROM_TimerControlEvent(WTIMER0_BASE, TIMER_B, TIMER_EVENT_POS_EDGE);
 
   ROM_IntMasterEnable();
-  ROM_TimerIntEnable(WTIMER0_BASE, TIMER_CAPA_EVENT);
-  ROM_IntEnable(INT_WTIMER0A);
+  ROM_TimerIntEnable(WTIMER0_BASE, TIMER_CAPB_EVENT);
+  ROM_IntEnable(INT_WTIMER0B);
 
-  ROM_TimerEnable(WTIMER0_BASE, TIMER_A);
+  ROM_TimerEnable(WTIMER0_BASE, TIMER_BOTH);
 }
 
 
@@ -312,95 +327,98 @@ record_hall_sensor(uint32_t timer_val)
 
 
 void
-IntHandlerWTimer0A(void)
+IntHandlerWTimer0B(void)
 {
   /*
     Wait a little while before taking the interrupt again.
     This to work-around a very unstable signal around the low->high
     transition.
   */
-  ROM_IntDisable(INT_WTIMER0A);
-  ROM_TimerIntClear(WTIMER0_BASE, TIMER_CAPA_EVENT);
+  ROM_IntDisable(INT_WTIMER0B);
+  ROM_TimerIntClear(WTIMER0_BASE, TIMER_CAPB_EVENT);
   hall_capture_delay = 50;
 
 #ifndef FAKE_HALL_SENSOR
-  record_hall_sensor(ROM_TimerValueGet(WTIMER0_BASE, TIMER_A));
+  record_hall_sensor(ROM_TimerValueGet(WTIMER0_BASE, TIMER_B));
 #endif
 }
 
 
 /*
-  Configure Timer2B to output a PWM signal for GSCLK1.
-  Timer2A triggers an interrupt at the end of each TLC5940 PWM period.
+  Configure Timer2A as gsclk2 on PF4.
+  Configure Timer2B to trigger interrupt at the end of each TLC5940 PWM period.
 */
 static void
-setup_pwm_GSCLK1_n_timer(void)
+setup_pwm_GSCLK2_n_timer(void)
 {
   /* Enable the timer. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER2);
   /* Enable the GPIO module for the timer pin. */
-  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
-  /* Configure PB1 to be I/O pin for timer 2 B. */
-  ROM_GPIOPinConfigure(GPIO_PB1_T2CCP1);
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
+  /* Configure PF4 to be I/O pin for timer 2 A. */
+  ROM_GPIOPinConfigure(GPIO_PF4_T2CCP0);
   /*
-    Configure PB1: direction controlled by hardware, 2mA drive strength,
+    Configure PB1: direction controlled by hardware, 8mA drive strength,
     normal drive (no pullup).
   */
-  ROM_GPIOPinTypeTimer(GPIO_PORTB_BASE, GPIO_PIN_1);
-  /* Configure 2 * 16-bit timer, B in PWM mode, A periodic. */
+  ROM_GPIOPinTypeTimer(GPIO_PORTF_BASE, GPIO_PIN_4);
+  ROM_GPIOPadConfigSet(GPIO_PORTF_BASE, GPIO_PIN_4, GPIO_STRENGTH_8MA,
+                       GPIO_PIN_TYPE_STD);
+
+  /* Configure 16-bit timer A as PWM, and B in periodic mode. */
   ROM_TimerConfigure(TIMER2_BASE, TIMER_CFG_SPLIT_PAIR |
-                     TIMER_CFG_A_PERIODIC | TIMER_CFG_B_PWM);
+                     TIMER_CFG_A_PWM | TIMER_CFG_B_PERIODIC);
+
   /*
-    Set timer2B start and compare values.
+    Set timer2A start and compare values.
     High at 3, low at 1 -> 80MHz/4 = 20MHz clock.
   */
-  ROM_TimerLoadSet(TIMER2_BASE, TIMER_B, 3);
-  ROM_TimerMatchSet(TIMER2_BASE, TIMER_B, 1);
+  ROM_TimerLoadSet(TIMER2_BASE, TIMER_A, 3);
+  ROM_TimerMatchSet(TIMER2_BASE, TIMER_A, 1);
 
   /* Set timer interrupt at GSCLK PWM period. */
-  ROM_TimerLoadSet(TIMER2_BASE, TIMER_A, 4*4096);
+  ROM_TimerLoadSet(TIMER2_BASE, TIMER_B, 4*4096);
 
   /* Enable interrrupts. */
   ROM_IntMasterEnable();
-  ROM_TimerIntEnable(TIMER2_BASE, TIMER_TIMA_TIMEOUT);
-  ROM_IntEnable(INT_TIMER2A);
+  ROM_TimerIntEnable(TIMER2_BASE, TIMER_TIMB_TIMEOUT);
+  ROM_IntEnable(INT_TIMER2B);
 
   /* Start the timer. */
   ROM_TimerEnable(TIMER2_BASE, TIMER_BOTH);
 }
 
 
-/* Configure Timer3 to output a PWM signal for GSCLK2 and 3. */
+/* Configure Timer1 to output a PWM signal for GSCLK3 on PB5. */
 static void
-setup_pwm_GSCLK23(void)
+setup_pwm_GSCLK3(void)
 {
   /* Enable the timer. */
-  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER3);
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_TIMER1);
   /* Enable the GPIO module for the timer pin. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
-  /* Configure PB2 and PB3 to be I/O pins for timer 3 A and B. */
-  ROM_GPIOPinConfigure(GPIO_PB2_T3CCP0);
-  ROM_GPIOPinConfigure(GPIO_PB3_T3CCP1);
+  /* Configure PB5 to be I/O pin for timer 1 B. */
+  ROM_GPIOPinConfigure(GPIO_PB5_T1CCP1);
+
   /*
-    Configure PB2 and PB3: direction controlled by hardware, 2mA drive
+    Configure PB2 and PB3: direction controlled by hardware, 8mA drive
     strength, normal drive (no pullup).
   */
-  ROM_GPIOPinTypeTimer(GPIO_PORTB_BASE, GPIO_PIN_2);
-  ROM_GPIOPinTypeTimer(GPIO_PORTB_BASE, GPIO_PIN_3);
-  /* Configure 2 * 16-bit timer in PWM mode. */
-  ROM_TimerConfigure(TIMER3_BASE, TIMER_CFG_SPLIT_PAIR |
-                     TIMER_CFG_A_PWM | TIMER_CFG_B_PWM);
+  ROM_GPIOPinTypeTimer(GPIO_PORTB_BASE, GPIO_PIN_5);
+  ROM_GPIOPadConfigSet(GPIO_PORTB_BASE, GPIO_PIN_5, GPIO_STRENGTH_8MA,
+                       GPIO_PIN_TYPE_STD);
+
+  /* Configure 16-bit timer in PWM mode. */
+  ROM_TimerConfigure(TIMER1_BASE, TIMER_CFG_SPLIT_PAIR | TIMER_CFG_B_PWM);
   /*
-    Set timer3A/B start and compare values.
+    Set timer1B start and compare values.
     High at 3, low at 1 -> 80MHz/4 = 20MHz clock.
   */
-  ROM_TimerLoadSet(TIMER3_BASE, TIMER_A, 3);
-  ROM_TimerMatchSet(TIMER3_BASE, TIMER_A, 1);
-  ROM_TimerLoadSet(TIMER3_BASE, TIMER_B, 3);
-  ROM_TimerMatchSet(TIMER3_BASE, TIMER_B, 1);
+  ROM_TimerLoadSet(TIMER1_BASE, TIMER_B, 3);
+  ROM_TimerMatchSet(TIMER1_BASE, TIMER_B, 1);
 
   /* Start the timer. */
-  ROM_TimerEnable(TIMER3_BASE, TIMER_BOTH);
+  ROM_TimerEnable(TIMER1_BASE, TIMER_B);
 }
 
 
@@ -745,11 +763,11 @@ config_nrf_ssi_gpio(void)
   ROM_GPIOPinWrite(GPIO_PORTF_BASE, GPIO_PIN_3, GPIO_PIN_3);
   /* CE pin, low initially */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
-  ROM_GPIOPinTypeGPIOOutput(GPIO_PORTB_BASE, GPIO_PIN_0);
-  ROM_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_0, 0);
+  ROM_GPIOPinTypeGPIOOutput(GPIO_PORTB_BASE, GPIO_PIN_3);
+  ROM_GPIOPinWrite(GPIO_PORTB_BASE, GPIO_PIN_3, 0);
   /* IRQ pin as input. */
-  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
-  ROM_GPIOPinTypeGPIOInput(GPIO_PORTF_BASE, GPIO_PIN_4);
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
+  ROM_GPIOPinTypeGPIOInput(GPIO_PORTB_BASE, GPIO_PIN_0);
 
   /*
     Configure the SPI for correct mode to read from nRF24L01+.
@@ -1414,9 +1432,9 @@ nrf_init_config(uint8_t is_rx, uint32_t channel, uint32_t power,
 static void
 config_nrf_interrupts(void)
 {
-  ROM_GPIOIntTypeSet(GPIO_PORTF_BASE, GPIO_PIN_4, GPIO_LOW_LEVEL);
+  ROM_GPIOIntTypeSet(GPIO_PORTB_BASE, GPIO_PIN_0, GPIO_LOW_LEVEL);
   ROM_IntMasterEnable();
-  ROM_IntEnable(INT_GPIOF);
+  ROM_IntEnable(INT_GPIOB);
 }
 
 
@@ -1424,10 +1442,10 @@ static struct nrf_async_receive_multi receive_multi_state;
 static volatile uint8_t receive_multi_running = 0;
 
 void
-IntHandlerGPIOf(void)
+IntHandlerGPIOb(void)
 {
-  uint32_t irq_status = HWREG(GPIO_PORTF_BASE + GPIO_O_MIS) & 0xff;
-  if (irq_status & GPIO_PIN_4)
+  uint32_t irq_status = HWREG(GPIO_PORTB_BASE + GPIO_O_MIS) & 0xff;
+  if (irq_status & GPIO_PIN_0)
   {
     /* Rx IRQ. */
     if (receive_multi_running)
@@ -1441,8 +1459,8 @@ IntHandlerGPIOf(void)
         Clear the interrupt request and disable further interrupts until we can
         clear the request from the device over SPI.
       */
-      HWREG(GPIO_PORTF_BASE + GPIO_O_IM) &= ~GPIO_PIN_4 & 0xff;
-      HWREG(GPIO_PORTF_BASE + GPIO_O_ICR) = GPIO_PIN_4;
+      HWREG(GPIO_PORTB_BASE + GPIO_O_IM) &= ~GPIO_PIN_0 & 0xff;
+      HWREG(GPIO_PORTB_BASE + GPIO_O_ICR) = GPIO_PIN_0;
 
       serial_output_str("Rx: IRQ: RX_DR (spurious)\r\n");
     }
@@ -1476,7 +1494,7 @@ start_receive_packets(uint32_t ssi_base, uint32_t csn_base,
   receive_multi_running = 1;
   nrf_async_receive_multi_start(&receive_multi_state, my_recv_cb, NULL,
                                 ssi_base, csn_base, csn_pin, ce_base, ce_pin,
-                                GPIO_PORTF_BASE, GPIO_PIN_4);
+                                GPIO_PORTB_BASE, GPIO_PIN_0);
 }
 
 
@@ -1604,7 +1622,7 @@ static uint8_t tlc3_frame_buf[2][TLC_GS_BYTES];
 static float scanline_angle;
 
 void
-IntHandlerTimer2A(void)
+IntHandlerTimer2B(void)
 {
   uint8_t cur;
   static uint32_t anim_counter = 0;
@@ -1615,7 +1633,7 @@ IntHandlerTimer2A(void)
   static uint32_t fake_hall_counter = 0;
 #endif
 
-  ROM_TimerIntClear(TIMER2_BASE, TIMER_TIMA_TIMEOUT);
+  ROM_TimerIntClear(TIMER2_BASE, TIMER_TIMB_TIMEOUT);
 
   /*
     Latch in the new data. Be sure to wait first for it to be ready.
@@ -1628,7 +1646,7 @@ IntHandlerTimer2A(void)
   wait_for_spi_to_tlcs(&tlc2_udma_running, SSI_TLC2_BASE);
   wait_for_spi_to_tlcs(&tlc3_udma_running, SSI_TLC3_BASE);
   latch_data_to_tlcs();
-  current_time = HWREG(WTIMER0_BASE + TIMER_O_TAV);
+  current_time = HWREG(WTIMER0_BASE + TIMER_O_TBV);
   start_time = last_hall;
   current_period = last_hall_period;
 
@@ -1673,8 +1691,8 @@ IntHandlerTimer2A(void)
     hall_capture_delay = tmp-1;
   else
   {
-    ROM_TimerIntClear(WTIMER0_BASE, TIMER_CAPA_EVENT);
-    ROM_IntEnable(INT_WTIMER0A);
+    ROM_TimerIntClear(WTIMER0_BASE, TIMER_CAPB_EVENT);
+    ROM_IntEnable(INT_WTIMER0B);
   }
 #ifdef FAKE_HALL_SENSOR
   if (++fake_hall_counter > 5000)
@@ -1701,11 +1719,11 @@ IntHandlerDMA(void)
     scanline conversion (which is time-consuming).
   */
   cur = current_tlc_frame_buf;
-  t_start = HWREG(WTIMER0_BASE + TIMER_O_TAV);
+  t_start = HWREG(WTIMER0_BASE + TIMER_O_TBV);
   bm_scanline(scanline_angle, 32, tlc1_frame_buf[cur]);
   bm_scanline(scanline_angle+(M_PI*2.0f/3.0f), 32, tlc2_frame_buf[cur]);
   bm_scanline(scanline_angle+(M_PI*4.0f/3.0f), 32, tlc3_frame_buf[cur]);
-  t_stop = HWREG(WTIMER0_BASE + TIMER_O_TAV);
+  t_stop = HWREG(WTIMER0_BASE + TIMER_O_TBV);
   scanline_time = t_start - t_stop;
 }
 
@@ -1771,7 +1789,7 @@ int main()
   generate_test_image();
 
   /* Setup GPIO to read HALL sensor. */
-  setup_hall_gpio_n_timer();
+  setup_hall_gpio_n_gsclk1();
 
   /* Configure serial. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
@@ -1799,12 +1817,12 @@ int main()
     to allow preemption (used for scanline conversion which consumes a lot of
     CPU).
   */
-  ROM_IntPrioritySet(INT_WTIMER0A, 0 << 5);
-  ROM_IntPrioritySet(INT_TIMER2A, 0 << 5);
+  ROM_IntPrioritySet(INT_WTIMER0B, 0 << 5);
+  ROM_IntPrioritySet(INT_TIMER2B, 0 << 5);
   ROM_IntPrioritySet(INT_SSI0, 0 << 5);
   ROM_IntPrioritySet(INT_SSI2, 0 << 5);
   ROM_IntPrioritySet(INT_SSI3, 0 << 5);
-  ROM_IntPrioritySet(INT_GPIOF, 4 << 5);
+  ROM_IntPrioritySet(INT_GPIOB, 4 << 5);
   ROM_IntPrioritySet(INT_SSI1, 4 << 5);
   ROM_IntPrioritySet(INT_UDMA, 7 << 5);
   ROM_IntEnable(INT_UDMA);
@@ -1837,18 +1855,18 @@ int main()
   nrf_init_config(1 /* Rx */, 2, nRF_RF_PWR_0DBM,
                   SSI1_BASE, GPIO_PORTF_BASE, GPIO_PIN_3);
   /* Set Rx in receive mode. */
-  ce_high(GPIO_PORTB_BASE, GPIO_PIN_0);
+  ce_high(GPIO_PORTB_BASE, GPIO_PIN_3);
 
   start_receive_packets(SSI1_BASE, GPIO_PORTF_BASE, GPIO_PIN_3,
-                        GPIO_PORTB_BASE, GPIO_PIN_0);
+                        GPIO_PORTB_BASE, GPIO_PIN_3);
 
   /*
     Once we start the timer 1A, we will get interrupts that sends data
     to the TLCs and latch it. So we must do this after everything else
     is set up correctly.
   */
-  setup_pwm_GSCLK23();
-  setup_pwm_GSCLK1_n_timer();
+  setup_pwm_GSCLK3();
+  setup_pwm_GSCLK2_n_timer();
 
   for (;;) {
     static uint32_t prior_hall= 0xffffffffUL;

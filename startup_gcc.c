@@ -43,13 +43,13 @@ static void IntDefaultHandler(void);
 extern int main(void);
 
 /* Interrupts */
-extern void IntHandlerWTimer0A(void);
-extern void IntHandlerTimer2A(void);
+extern void IntHandlerWTimer0B(void);
+extern void IntHandlerTimer2B(void);
 extern void IntHandlerSSI0(void);
 extern void IntHandlerSSI2(void);
 extern void IntHandlerSSI3(void);
 extern void IntHandlerDMA(void);
-extern void IntHandlerGPIOf(void);
+extern void IntHandlerGPIOb(void);
 extern void IntHandlerSSI1(void);
 
 //*****************************************************************************
@@ -86,7 +86,7 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // The PendSV handler
     IntDefaultHandler,                      // The SysTick handler
     IntDefaultHandler,                      // GPIO Port A
-    IntDefaultHandler,                      // GPIO Port B
+    IntHandlerGPIOb,                        // GPIO Port B
     IntDefaultHandler,                      // GPIO Port C
     IntDefaultHandler,                      // GPIO Port D
     IntDefaultHandler,                      // GPIO Port E
@@ -108,14 +108,14 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // Timer 0 subtimer B
     IntDefaultHandler,                      // Timer 1 subtimer A
     IntDefaultHandler,                      // Timer 1 subtimer B
-    IntHandlerTimer2A,                      // Timer 2 subtimer A
-    IntDefaultHandler,                      // Timer 2 subtimer B
+    IntDefaultHandler,                      // Timer 2 subtimer A
+    IntHandlerTimer2B,                      // Timer 2 subtimer B
     IntDefaultHandler,                      // Analog Comparator 0
     IntDefaultHandler,                      // Analog Comparator 1
     IntDefaultHandler,                      // Analog Comparator 2
     IntDefaultHandler,                      // System Control (PLL, OSC, BO)
     IntDefaultHandler,                      // FLASH Control
-    IntHandlerGPIOf,                        // GPIO Port F
+    IntDefaultHandler,                      // GPIO Port F
     IntDefaultHandler,                      // GPIO Port G
     IntDefaultHandler,                      // GPIO Port H
     IntDefaultHandler,                      // UART2 Rx and Tx
@@ -179,8 +179,8 @@ void (* const g_pfnVectors[])(void) =
     0,                                      // Reserved
     IntDefaultHandler,                      // Timer 5 subtimer A
     IntDefaultHandler,                      // Timer 5 subtimer B
-    IntHandlerWTimer0A,                     // Wide Timer 0 subtimer A
-    IntDefaultHandler,                      // Wide Timer 0 subtimer B
+    IntDefaultHandler,                      // Wide Timer 0 subtimer A
+    IntHandlerWTimer0B,                     // Wide Timer 0 subtimer B
     IntDefaultHandler,                      // Wide Timer 1 subtimer A
     IntDefaultHandler,                      // Wide Timer 1 subtimer B
     IntDefaultHandler,                      // Wide Timer 2 subtimer A
