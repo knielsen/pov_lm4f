@@ -36,6 +36,8 @@
 #define FAKE_HALL_SENSOR 1
 /* Define to use only a single blade, for testing. */
 //#define SINGLE_BLADE 1
+/* Define if no nRF24L01+ connected. */
+//#define DISABLE_NRF 1
 
 /*
   Current pinouts:
@@ -55,9 +57,9 @@
 
   Rx:
     PF2  SCK        GND *1 2. VCC
-    PF3  CSN        PB0 .3 4. PF3
+    PF3  CSN        PB3 .3 4. PF3
     PF0  MISO       PF2 .5 6. PF1
-    PF1  MOSI       PF0 .7 8. PF4
+    PF1  MOSI       PF0 .7 8. PB0
     PB0  IRQ
     PB3  CE
 */
@@ -140,6 +142,21 @@
 
 
 
+/* A simple logging facility, a cyclic buffer. */
+static uint32_t tb[64*2];
+static uint32_t tbi = 0;
+ __attribute__ ((unused))
+static void
+tlog(uint32_t tag, uint32_t val)
+{
+  if (tbi >= (sizeof(tb)/sizeof(tb[0])))
+    return;
+  tb[tbi++] = tag;
+  tb[tbi++] = val;
+  // tbi = tbi % (sizeof(tb)/sizeof(tb[0]));
+}
+
+
 #ifndef M_PI
 #define M_PI 3.141592654f
 #endif
@@ -173,7 +190,7 @@ serial_output_str(const char *str)
 static void
 println_uint32(uint32_t val)
 {
-  char buf[12];
+  char buf[13];
   char *p = buf;
   uint32_t l, d;
 
@@ -189,6 +206,7 @@ println_uint32(uint32_t val)
     l /= 10;
   } while (l > 0);
 
+  *p++ = '\r';
   *p++ = '\n';
   *p = '\0';
   serial_output_str(buf);
@@ -257,12 +275,13 @@ float_to_str(char *buf, float f, uint32_t dig_before, uint32_t dig_after)
 static void
 println_float(float f, uint32_t dig_before, uint32_t dig_after)
 {
-  char buf[20];
+  char buf[21];
   char *p = buf;
 
   float_to_str(p, f, dig_before, dig_after);
   while (*p)
     ++p;
+  *p++ = '\r';
   *p++ = '\n';
   *p = '\0';
   serial_output_str(buf);
@@ -607,7 +626,10 @@ try_again:
     if ((i % (12*LEDS_PER_TLC/8)) == 2 || (i % (12*LEDS_PER_TLC/8)) == 14)
       ROM_UARTCharPut(UART0_BASE, ' ');
     else if ((i % (12*LEDS_PER_TLC/8)) == 23)
+    {
+      ROM_UARTCharPut(UART0_BASE, '\r');
       ROM_UARTCharPut(UART0_BASE, '\n');
+    }
 
     if ((i % (12*LEDS_PER_TLC/8)) < 3 || (i % (12*LEDS_PER_TLC/8)) >= 15)
       continue;
@@ -620,19 +642,14 @@ try_again:
       {
         /* Check if the received DC value is correct, halt if not. */
         if (value != dc_value)
-        {
-          ROM_UARTCharPut(UART0_BASE, '#');
-          serial_output_hexbyte(value);
-          ROM_UARTCharPut(UART0_BASE, '#');
-          ROM_UARTCharPut(UART0_BASE, '\n');
           ++dc_errors;
-        }
         value = 0;
         bits_collected = 0;
       }
     }
   }
   ROM_UARTCharPut(UART0_BASE, '!');
+  ROM_UARTCharPut(UART0_BASE, '\r');
   ROM_UARTCharPut(UART0_BASE, '\n');
 
   if (dc_errors > 0)
@@ -699,7 +716,7 @@ static volatile uint8_t tlc3_udma_running = 0;
 static void
 wait_for_spi_to_tlcs(volatile uint8_t *running_flag, uint32_t ssi_base)
 {
-  while (tlc1_udma_running)
+  while (*running_flag)
     ;
   while (ROM_SSIBusy(ssi_base))
     ;
@@ -1633,7 +1650,19 @@ IntHandlerTimer2B(void)
   static uint32_t fake_hall_counter = 0;
 #endif
 
-  ROM_TimerIntClear(TIMER2_BASE, TIMER_TIMB_TIMEOUT);
+  if (!(HWREG(TIMER2_BASE + TIMER_O_MIS) & TIMER_TIMB_TIMEOUT))
+  {
+    /*
+      For some reason, I get occasional spurious interrupts on the Timer 2B
+      interrupt vector. They seem to be related to SSI3 DMA completion.
+
+      The interrupt routine is entered with the "masked interrupt status"
+      being zero, suggesting that no interrupt was pending ...
+    */
+    return;
+  }
+  /* Clear the timer2b timeout interrupt. */
+  HWREG(TIMER2_BASE + TIMER_O_ICR) =  TIMER_TIMB_TIMEOUT;
 
   /*
     Latch in the new data. Be sure to wait first for it to be ready.
@@ -1797,7 +1826,7 @@ int main()
   ROM_GPIOPinConfigure(GPIO_PA0_U0RX);
   ROM_GPIOPinConfigure(GPIO_PA1_U0TX);
   ROM_GPIOPinTypeUART(GPIO_PORTA_BASE, GPIO_PIN_0 | GPIO_PIN_1);
-  ROM_UARTConfigSetExpClk(UART0_BASE, (ROM_SysCtlClockGet()), 2000000,
+  ROM_UARTConfigSetExpClk(UART0_BASE, (ROM_SysCtlClockGet()), 500000,
                       (UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE |
                        UART_CONFIG_PAR_NONE));
 
@@ -1852,6 +1881,7 @@ int main()
   config_nrf_interrupts();
   /* Wait another 20 millisec (nRF24L01+ datasheet says min 4.5 millisec). */
   ROM_SysCtlDelay(MCU_HZ/3/1000*20);
+#ifndef DISABLE_NRF
   nrf_init_config(1 /* Rx */, 2, nRF_RF_PWR_0DBM,
                   SSI1_BASE, GPIO_PORTF_BASE, GPIO_PIN_3);
   /* Set Rx in receive mode. */
@@ -1859,6 +1889,7 @@ int main()
 
   start_receive_packets(SSI1_BASE, GPIO_PORTF_BASE, GPIO_PIN_3,
                         GPIO_PORTB_BASE, GPIO_PIN_3);
+#endif
 
   /*
     Once we start the timer 1A, we will get interrupts that sends data
