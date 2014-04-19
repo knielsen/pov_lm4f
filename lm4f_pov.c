@@ -1876,6 +1876,10 @@ int main()
               GPIO_XLAT3_BASE, GPIO_XLAT3_PIN);
 #endif
   serial_output_str("TLC load ok!\r\n");
+
+  config_spi_tlc_write(SSI_TLC1_BASE, 8);
+  config_spi_tlc_write(SSI_TLC2_BASE, 8);
+  config_spi_tlc_write(SSI_TLC3_BASE, 8);
   init_udma_for_tlc();
 
   /* Setup for receiving data on nRF24L01+. */
