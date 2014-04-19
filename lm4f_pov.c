@@ -17,6 +17,7 @@
 #include "driverlib/timer.h"
 #include "driverlib/ssi.h"
 #include "driverlib/udma.h"
+#include "driverlib/interrupt.h"
 
 #include "gfx.h"
 #include "nrf24l01p.h"
@@ -35,7 +36,7 @@
 */
 #define FAKE_HALL_SENSOR 1
 /* Define to use only a single blade, for testing. */
-//#define SINGLE_BLADE 1
+#define SINGLE_BLADE 1
 /* Define if no nRF24L01+ connected. */
 //#define DISABLE_NRF 1
 
@@ -523,7 +524,7 @@ config_spi_tlc_read(uint32_t base, uint32_t bits_per_word)
 
   ROM_SSIDisable(base);
   ROM_SSIConfigSetExpClk(base, ROM_SysCtlClockGet(), SSI_FRF_MOTO_MODE_1,
-                     SSI_MODE_MASTER, 20000000, bits_per_word);
+                     SSI_MODE_MASTER, 10000000, bits_per_word);
   ROM_SSIEnable(base);
 }
 
@@ -598,6 +599,7 @@ try_again:
   config_spi_tlc_read(ssi_base, 8);
 
   /* Set MODE low, to select GS mode. */
+  ROM_SysCtlDelay(5);
   ROM_GPIOPinWrite(mode_base, mode_pin, 0);
   ROM_SysCtlDelay(5);
 
@@ -1899,6 +1901,7 @@ int main()
   setup_pwm_GSCLK3();
   setup_pwm_GSCLK2_n_timer();
 
+  serial_output_str("Starting main loop...\r\n");
   for (;;) {
     static uint32_t prior_hall= 0xffffffffUL;
     uint32_t hall;
