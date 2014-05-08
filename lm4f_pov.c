@@ -23,7 +23,7 @@
 #include "nrf24l01p.h"
 
 
-#define DC_VALUE 1
+#define DC_VALUE 4
 #define NUM_TLC 6
 #define LEDS_PER_TLC 16
 #define TLC_GS_BYTES (12 * LEDS_PER_TLC * NUM_TLC / 8)
@@ -34,11 +34,14 @@
   When defined, the actual hall sensor is ignored, instead it fakes that
   the hall triggers with some reasonable frequency.
 */
-#define FAKE_HALL_SENSOR 1
+//#define FAKE_HALL_SENSOR 1
 /* Define to use only a single blade, for testing. */
-#define SINGLE_BLADE 1
+//#define SINGLE_BLADE 1
 /* Define if no nRF24L01+ connected. */
 //#define DISABLE_NRF 1
+//#define HALL1 1
+#define HALL2 1
+//#define HALL3 1
 
 /*
   Current pinouts:
@@ -324,10 +327,63 @@ setup_hall_gpio_n_gsclk1(void)
   ROM_TimerControlEvent(WTIMER0_BASE, TIMER_B, TIMER_EVENT_POS_EDGE);
 
   ROM_IntMasterEnable();
+#ifdef HALL1
   ROM_TimerIntEnable(WTIMER0_BASE, TIMER_CAPB_EVENT);
   ROM_IntEnable(INT_WTIMER0B);
+#endif
 
   ROM_TimerEnable(WTIMER0_BASE, TIMER_BOTH);
+}
+
+
+/*
+  Configure wtimer5a for capture of the hall3 sensor on PD6.
+  Configure wtimer5b for capture of the hall2 sensor on PD7.
+*/
+static void
+setup_hall23(void)
+{
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_WTIMER5);
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOD);
+
+  /* PD7 is special (NMI), needs unlock to be re-assigned to timer. */
+  HWREG(GPIO_PORTD_BASE + GPIO_O_LOCK) = GPIO_LOCK_KEY_DD;
+  HWREG(GPIO_PORTD_BASE + GPIO_O_CR) |= 0x80;
+  HWREG(GPIO_PORTD_BASE + GPIO_O_LOCK) = 0;
+
+  ROM_GPIOPinConfigure(GPIO_PD6_WT5CCP0);
+  ROM_GPIOPinConfigure(GPIO_PD7_WT5CCP1);
+  ROM_GPIOPinTypeTimer(GPIO_PORTD_BASE, GPIO_PIN_6|GPIO_PIN_7);
+
+  /*
+    I could not get the timer capture to work in count-up mode.
+    Perhaps count-up for capture is just not supported on my chip, though
+    I did not see this anywhere in the datasheet...
+  */
+
+  ROM_TimerConfigure(WTIMER5_BASE, TIMER_CFG_SPLIT_PAIR |
+                     TIMER_CFG_A_CAP_TIME | TIMER_CFG_B_CAP_TIME);
+  /* Set wtimer5A/B to count the full 32-bit range ffffffff..0 */
+  ROM_TimerLoadSet(WTIMER5_BASE, TIMER_A, 0xffffffffUL);
+  ROM_TimerMatchSet(WTIMER5_BASE, TIMER_A, 0);
+  ROM_TimerControlEvent(WTIMER5_BASE, TIMER_A, TIMER_EVENT_POS_EDGE);
+
+  ROM_TimerLoadSet(WTIMER5_BASE, TIMER_B, 0xffffffffUL);
+  ROM_TimerMatchSet(WTIMER5_BASE, TIMER_B, 0);
+  ROM_TimerControlEvent(WTIMER5_BASE, TIMER_B, TIMER_EVENT_POS_EDGE);
+
+  ROM_IntMasterEnable();
+#ifdef HALL3
+  ROM_TimerIntEnable(WTIMER5_BASE, TIMER_CAPA_EVENT);
+#endif
+#ifdef HALL2
+  ROM_TimerIntEnable(WTIMER5_BASE, TIMER_CAPB_EVENT);
+#endif
+#if defined(HALL2) || defined(HALL3)
+  ROM_IntEnable(INT_WTIMER5B);
+#endif
+
+  ROM_TimerEnable(WTIMER5_BASE, TIMER_BOTH);
 }
 
 
@@ -360,6 +416,29 @@ IntHandlerWTimer0B(void)
 
 #ifndef FAKE_HALL_SENSOR
   record_hall_sensor(ROM_TimerValueGet(WTIMER0_BASE, TIMER_B));
+#endif
+}
+
+
+void
+IntHandlerWTimer5B(void)
+{
+  /*
+    Wait a little while before taking the interrupt again.
+    This to work-around a very unstable signal around the low->high
+    transition.
+  */
+  ROM_IntDisable(INT_WTIMER5B);
+  ROM_TimerIntClear(WTIMER5_BASE, TIMER_CAPA_EVENT|TIMER_CAPB_EVENT);
+  hall_capture_delay = 50;
+
+#ifndef FAKE_HALL_SENSOR
+#ifdef HALL3
+  record_hall_sensor(ROM_TimerValueGet(WTIMER5_BASE, TIMER_A));
+#endif
+#ifdef HALL2
+  record_hall_sensor(ROM_TimerValueGet(WTIMER5_BASE, TIMER_B));
+#endif
 #endif
 }
 
@@ -1677,7 +1756,15 @@ IntHandlerTimer2B(void)
   wait_for_spi_to_tlcs(&tlc2_udma_running, SSI_TLC2_BASE);
   wait_for_spi_to_tlcs(&tlc3_udma_running, SSI_TLC3_BASE);
   latch_data_to_tlcs();
+#ifdef HALL1
   current_time = HWREG(WTIMER0_BASE + TIMER_O_TBV);
+#endif
+#ifdef HALL2
+  current_time = HWREG(WTIMER5_BASE + TIMER_O_TBV);
+#endif
+#ifdef HALL3
+  current_time = HWREG(WTIMER5_BASE + TIMER_O_TAV);
+#endif
   start_time = last_hall;
   current_period = last_hall_period;
 
@@ -1722,8 +1809,18 @@ IntHandlerTimer2B(void)
     hall_capture_delay = tmp-1;
   else
   {
+#ifdef HALL1
     ROM_TimerIntClear(WTIMER0_BASE, TIMER_CAPB_EVENT);
     ROM_IntEnable(INT_WTIMER0B);
+#endif
+#ifdef HALL2
+    ROM_TimerIntClear(WTIMER5_BASE, TIMER_CAPB_EVENT);
+    ROM_IntEnable(INT_WTIMER5B);
+#endif
+#ifdef HALL3
+    ROM_TimerIntClear(WTIMER5_BASE, TIMER_CAPA_EVENT);
+    ROM_IntEnable(INT_WTIMER5A);
+#endif
   }
 #ifdef FAKE_HALL_SENSOR
   if (++fake_hall_counter > 5000)
@@ -1750,11 +1847,27 @@ IntHandlerDMA(void)
     scanline conversion (which is time-consuming).
   */
   cur = current_tlc_frame_buf;
+#ifdef HALL1
   t_start = HWREG(WTIMER0_BASE + TIMER_O_TBV);
+#endif
+#ifdef HALL2
+  t_start = HWREG(WTIMER5_BASE + TIMER_O_TBV);
+#endif
+#ifdef HALL3
+  t_start = HWREG(WTIMER5_BASE + TIMER_O_TAV);
+#endif
   bm_scanline(scanline_angle, 32, tlc1_frame_buf[cur]);
   bm_scanline(scanline_angle+(M_PI*2.0f/3.0f), 32, tlc2_frame_buf[cur]);
   bm_scanline(scanline_angle+(M_PI*4.0f/3.0f), 32, tlc3_frame_buf[cur]);
+#ifdef HALL1
   t_stop = HWREG(WTIMER0_BASE + TIMER_O_TBV);
+#endif
+#ifdef HALL2
+  t_stop = HWREG(WTIMER5_BASE + TIMER_O_TBV);
+#endif
+#ifdef HALL3
+  t_stop = HWREG(WTIMER5_BASE + TIMER_O_TAV);
+#endif
   scanline_time = t_start - t_stop;
 }
 
@@ -1821,6 +1934,7 @@ int main()
 
   /* Setup GPIO to read HALL sensor. */
   setup_hall_gpio_n_gsclk1();
+  setup_hall23();
 
   /* Configure serial. */
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_UART0);
@@ -1849,6 +1963,8 @@ int main()
     CPU).
   */
   ROM_IntPrioritySet(INT_WTIMER0B, 0 << 5);
+  ROM_IntPrioritySet(INT_WTIMER5A, 0 << 5);
+  ROM_IntPrioritySet(INT_WTIMER5B, 0 << 5);
   ROM_IntPrioritySet(INT_TIMER2B, 0 << 5);
   ROM_IntPrioritySet(INT_SSI0, 0 << 5);
   ROM_IntPrioritySet(INT_SSI2, 0 << 5);

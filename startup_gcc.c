@@ -44,6 +44,7 @@ extern int main(void);
 
 /* Interrupts */
 extern void IntHandlerWTimer0B(void);
+extern void IntHandlerWTimer5B(void);
 extern void IntHandlerTimer2B(void);
 extern void IntHandlerSSI0(void);
 extern void IntHandlerSSI2(void);
@@ -189,8 +190,8 @@ void (* const g_pfnVectors[])(void) =
     IntDefaultHandler,                      // Wide Timer 3 subtimer B
     IntDefaultHandler,                      // Wide Timer 4 subtimer A
     IntDefaultHandler,                      // Wide Timer 4 subtimer B
-    IntDefaultHandler,                      // Wide Timer 5 subtimer A
-    IntDefaultHandler,                      // Wide Timer 5 subtimer B
+    IntHandlerWTimer5B,                     // Wide Timer 5 subtimer A
+    IntHandlerWTimer5B,                     // Wide Timer 5 subtimer B
     IntDefaultHandler,                      // FPU
     IntDefaultHandler,                      // PECI 0
     IntDefaultHandler,                      // LPC 0
