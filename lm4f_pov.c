@@ -23,9 +23,10 @@
 #include "nrf24l01p.h"
 
 
-#define DC_VALUE 4
-#define NUM_TLC 6
+#define DC_VALUE 63
+#define NUM_LEDS 32
 #define LEDS_PER_TLC 16
+#define NUM_TLC ((NUM_LEDS*3+(LEDS_PER_TLC-1))/LEDS_PER_TLC)
 #define TLC_GS_BYTES (12 * LEDS_PER_TLC * NUM_TLC / 8)
 #define NUM_RGB_LEDS (NUM_TLC*LEDS_PER_TLC/3)
 
@@ -624,6 +625,19 @@ config_spi_tlc_write(uint32_t base, uint32_t bits_per_word)
   ROM_SSIEnable(base);
 }
 
+
+/*
+  Find the adjusted dot-correction value for a LED, to account for the
+  fact that outer LEDs have to swipe a larger area than inner ones.
+*/
+static uint32_t
+adjusted_dc_value(uint32_t led_idx, uint8_t dc_value)
+{
+  /* Let's round up to avoid too-dim LEDs in inner circles. */
+  return ((led_idx+1)*dc_value+(NUM_LEDS-1))/NUM_LEDS;
+}
+
+
 /*
   Set the DC register on TLC5940 through SSI.
   Then read out the TLC5940 status register and check that DC is correct.
@@ -639,6 +653,7 @@ init_tlc_dc(uint32_t ssi_base, uint8_t dc_value,
   uint32_t bits_collected;
   uint32_t error_retry_count=3;
   uint32_t dc_errors;
+  uint32_t led_num;
 
 try_again:
   /* Prepare to write 6-bit DC words to TLC. */
@@ -659,9 +674,11 @@ try_again:
   ROM_SysCtlDelay(5);
 
   /* Write DC value (6 bits) to all 16 outputs and all 6 TLCs. */
+  led_num = NUM_LEDS*3-1;
   for (i = 0; i < LEDS_PER_TLC * NUM_TLC; ++i)
   {
-    ROM_SSIDataPut(ssi_base, dc_value);
+    ROM_SSIDataPut(ssi_base, adjusted_dc_value(led_num/3, dc_value));
+    --led_num;
     while (ROM_SSIBusy(ssi_base))
       ;
     /* Drain the receive FIFO just so it does not get full. */
@@ -695,6 +712,7 @@ try_again:
   bits_collected = 0;
   value = 0;
   dc_errors = 0;
+  led_num = NUM_LEDS*3-1;
   for (i = 0; i < 12*LEDS_PER_TLC*NUM_TLC/8; ++i)
   {
     uint32_t j;
@@ -722,8 +740,9 @@ try_again:
       if (bits_collected == 6)
       {
         /* Check if the received DC value is correct, halt if not. */
-        if (value != dc_value)
+        if (value != adjusted_dc_value(led_num/3, dc_value))
           ++dc_errors;
+        --led_num;
         value = 0;
         bits_collected = 0;
       }
