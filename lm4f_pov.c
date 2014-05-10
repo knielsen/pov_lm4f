@@ -23,7 +23,7 @@
 #include "nrf24l01p.h"
 
 
-#define DC_VALUE 63
+#define DC_VALUE 4
 #define NUM_LEDS 32
 #define LEDS_PER_TLC 16
 #define NUM_TLC ((NUM_LEDS*3+(LEDS_PER_TLC-1))/LEDS_PER_TLC)
@@ -147,7 +147,7 @@
 
 
 
-/* A simple logging facility, a cyclic buffer. */
+/* A simple logging facility, a finite or cyclic buffer. */
 static uint32_t tb[64*2];
 static uint32_t tbi = 0;
  __attribute__ ((unused))
@@ -390,16 +390,50 @@ setup_hall23(void)
 
 static volatile uint32_t last_hall = 0xffffffffUL;
 static volatile uint32_t last_hall_period = 0;
+static volatile uint32_t prevlast_hall_period = 0;
 static volatile uint32_t hall_int_counts = 0;
 
 static volatile uint32_t hall_capture_delay = 0;
+static const uint32_t hall_deglitch_delay = 3;  /* Units of PWM period. */
 
-static void
+static uint32_t
 record_hall_sensor(uint32_t timer_val)
 {
-  last_hall_period = last_hall - timer_val;
+  uint32_t period;
+  uint32_t b = prevlast_hall_period;
+  uint32_t a = last_hall_period;
+
+  period = last_hall - timer_val;
+  /*
+    De-glitch some spurious hall signals that may come from stray magnetic
+    fields from motor coils or current supply wire.
+
+    When we are running with stable rotation speed, ignore signals that
+    are too far from what we expect.
+  */
+  if (period >= 14000000UL && period <= 16000000UL)
+  {
+    uint32_t olddel = b >= a ? b - a : a - b;
+    uint32_t newdel = period >= a ? period - a : a - period;
+    /*
+      Avoid errorneously skipping when we are changing speed, by accepting
+      jitter in period up to 3 times the difference between last two periods.
+
+      Otherwise discard a period that is more than 2% off the last one.
+    */
+    if (newdel > olddel * 3 && newdel > a / 50)
+    {
+      //tlog(4, period);
+      return 0;
+    }
+  }
+
+  prevlast_hall_period = a;
+  last_hall_period = period;
   last_hall = timer_val;
   ++hall_int_counts;
+  //tlog(3, period);
+  return 1;
 }
 
 
@@ -411,12 +445,14 @@ IntHandlerWTimer0B(void)
     This to work-around a very unstable signal around the low->high
     transition.
   */
-  ROM_IntDisable(INT_WTIMER0B);
   ROM_TimerIntClear(WTIMER0_BASE, TIMER_CAPB_EVENT);
-  hall_capture_delay = 50;
 
 #ifndef FAKE_HALL_SENSOR
-  record_hall_sensor(ROM_TimerValueGet(WTIMER0_BASE, TIMER_B));
+  if (!record_hall_sensor(ROM_TimerValueGet(WTIMER0_BASE, TIMER_B)))
+  {
+    ROM_IntDisable(INT_WTIMER0B);
+    hall_capture_delay = hall_deglitch_delay;
+  }
 #endif
 }
 
@@ -431,15 +467,21 @@ IntHandlerWTimer5B(void)
   */
   ROM_IntDisable(INT_WTIMER5B);
   ROM_TimerIntClear(WTIMER5_BASE, TIMER_CAPA_EVENT|TIMER_CAPB_EVENT);
-  hall_capture_delay = 50;
+  hall_capture_delay = hall_deglitch_delay;
 
 #ifndef FAKE_HALL_SENSOR
+  if (
 #ifdef HALL3
-  record_hall_sensor(ROM_TimerValueGet(WTIMER5_BASE, TIMER_A));
+      record_hall_sensor(ROM_TimerValueGet(WTIMER5_BASE, TIMER_A))
 #endif
 #ifdef HALL2
-  record_hall_sensor(ROM_TimerValueGet(WTIMER5_BASE, TIMER_B));
+      record_hall_sensor(ROM_TimerValueGet(WTIMER5_BASE, TIMER_B))
 #endif
+      )
+  {
+  ROM_IntDisable(INT_WTIMER5B);
+  hall_capture_delay = hall_deglitch_delay;
+  }
 #endif
 }
 
