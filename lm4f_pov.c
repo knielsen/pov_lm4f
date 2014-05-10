@@ -23,7 +23,7 @@
 #include "nrf24l01p.h"
 
 
-#define DC_VALUE 63
+#define DC_VALUE 6
 #define NUM_LEDS 32
 #define LEDS_PER_TLC 16
 #define NUM_TLC ((NUM_LEDS*3+(LEDS_PER_TLC-1))/LEDS_PER_TLC)

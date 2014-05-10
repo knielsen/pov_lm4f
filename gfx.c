@@ -178,9 +178,10 @@ accept_packet(uint8_t *packet)
     /* We received the last packet of a frame. Move to the next one. */
     receive_idx = (receive_idx+1)%3;
     render_idx = (render_idx+1)%3;
+    last_run_num = 0;
   }
-
-  last_run_num = run_num;
+  else
+    last_run_num = run_num;
 }
 
 
