@@ -23,7 +23,7 @@
 #include "nrf24l01p.h"
 
 
-#define DC_VALUE 4
+#define DC_VALUE 63
 #define NUM_LEDS 32
 #define LEDS_PER_TLC 16
 #define NUM_TLC ((NUM_LEDS*3+(LEDS_PER_TLC-1))/LEDS_PER_TLC)
@@ -394,7 +394,7 @@ static volatile uint32_t prevlast_hall_period = 0;
 static volatile uint32_t hall_int_counts = 0;
 
 static volatile uint32_t hall_capture_delay = 0;
-static const uint32_t hall_deglitch_delay = 3;  /* Units of PWM period. */
+static const uint32_t hall_deglitch_delay = 7;  /* Units of PWM period. */
 
 static uint32_t
 record_hall_sensor(uint32_t timer_val)
@@ -411,7 +411,7 @@ record_hall_sensor(uint32_t timer_val)
     When we are running with stable rotation speed, ignore signals that
     are too far from what we expect.
   */
-  if (period >= 14000000UL && period <= 16000000UL)
+  if (period >= 13000000UL && period <= 17000000UL)
   {
     uint32_t olddel = b >= a ? b - a : a - b;
     uint32_t newdel = period >= a ? period - a : a - period;
@@ -1900,6 +1900,7 @@ IntHandlerDMA(void)
 {
   uint32_t t_start, t_stop;
   uint8_t cur;
+  static const float ang_adj = M_PI*2.0f*(-29.0f)/360.0f;
   /*
     This is not really related to DMA.
 
@@ -1917,9 +1918,9 @@ IntHandlerDMA(void)
 #ifdef HALL3
   t_start = HWREG(WTIMER5_BASE + TIMER_O_TAV);
 #endif
-  bm_scanline(scanline_angle, 32, tlc1_frame_buf[cur]);
-  bm_scanline(scanline_angle+(M_PI*2.0f/3.0f), 32, tlc2_frame_buf[cur]);
-  bm_scanline(scanline_angle+(M_PI*4.0f/3.0f), 32, tlc3_frame_buf[cur]);
+  bm_scanline(scanline_angle+ang_adj, 32, tlc1_frame_buf[cur]);
+  bm_scanline(scanline_angle+ang_adj+(M_PI*2.0f/3.0f), 32, tlc2_frame_buf[cur]);
+  bm_scanline(scanline_angle+ang_adj+(M_PI*4.0f/3.0f), 32, tlc3_frame_buf[cur]);
 #ifdef HALL1
   t_stop = HWREG(WTIMER0_BASE + TIMER_O_TBV);
 #endif
