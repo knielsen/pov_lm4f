@@ -23,7 +23,7 @@
 #include "nrf24l01p.h"
 
 
-#define DC_VALUE 6
+#define DC_VALUE 4
 #define NUM_LEDS 32
 #define LEDS_PER_TLC 16
 #define NUM_TLC ((NUM_LEDS*3+(LEDS_PER_TLC-1))/LEDS_PER_TLC)
@@ -1641,7 +1641,19 @@ static volatile uint32_t packets_received_count = 0;
 static void
 my_recv_cb(uint8_t *packet, void *data)
 {
-  accept_packet(packet);
+  if (packet[0] == 255)
+  {
+    /* Command packet. */
+  }
+  else if (packet[0] == 254)
+  {
+    /* Debug packet. */
+    if (packet[1] == 255)
+      ROM_SysCtlReset();
+  }
+  else
+    accept_packet(packet);
+
   ++packets_received_count;
 }
 
