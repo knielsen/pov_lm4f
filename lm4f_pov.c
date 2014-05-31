@@ -1968,7 +1968,7 @@ IntHandlerDMA(void)
   t_start = HWREG(WTIMER5_BASE + TIMER_O_TAV);
 #endif
   bm_scanline(scanline_angle+ang_adj, 32, tlc1_frame_buf[cur]);
-  bm_scanline(scanline_angle+ang_adj+(120.7051f/180.0f*M_PI), 32, tlc2_frame_buf[cur]);
+  bm_scanline(scanline_angle+ang_adj+(121.3f/180.0f*M_PI), 32, tlc2_frame_buf[cur]);
   bm_scanline(scanline_angle+ang_adj+(2.0f*120.7051f/180.0f*M_PI), 32, tlc3_frame_buf[cur]);
 #ifdef HALL1
   t_stop = HWREG(WTIMER0_BASE + TIMER_O_TBV);

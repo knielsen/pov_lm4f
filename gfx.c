@@ -214,12 +214,12 @@ bm_put_disk(uint8_t *bitmap, int32_t cx, int32_t cy, int32_t r,
 void
 generate_test_image(void)
 {
+  uint8_t *bitmap = &bitmap_array[render_idx][0];
 /*
   Three disks, one of each colour red, blue, green.
 */
   static const uint16_t r = 10;
   static const uint16_t d = 15;
-  uint8_t *bitmap = &bitmap_array[render_idx][0];
 
   bm_clear(bitmap);
   bm_put_disk(bitmap, BM_SIZE_X/2, BM_SIZE_Y/2+d, r,
@@ -228,6 +228,14 @@ generate_test_image(void)
               pack_col(0, 15, 0));
   bm_put_disk(bitmap, BM_SIZE_X/2 - d*0.866f, BM_SIZE_Y/2 - d*0.5f, r,
               pack_col(0, 0, 15));
+
+/*
+  Horizontal line, for alignment.
+  uint32_t i;
+  bm_clear(bitmap);
+  for (i= 0; i < BM_SIZE_X; ++i)
+    bm_put_pixel(bitmap, i, BM_SIZE_Y/2, i%3==0 ? pack_col(15, 0, 0) : (i%3==1 ? pack_col(0, 15, 0) : pack_col(0, 0, 15)));
+*/
 
 /*
   Colour gradients.
