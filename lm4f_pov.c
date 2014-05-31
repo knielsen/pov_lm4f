@@ -29,6 +29,7 @@
 #define NUM_TLC ((NUM_LEDS*3+(LEDS_PER_TLC-1))/LEDS_PER_TLC)
 #define TLC_GS_BYTES (12 * LEDS_PER_TLC * NUM_TLC / 8)
 #define NUM_RGB_LEDS (NUM_TLC*LEDS_PER_TLC/3)
+#define PWM_CYCLES (4*4096)
 
 /*
   Useful for testing.
@@ -411,7 +412,7 @@ record_hall_sensor(uint32_t timer_val)
     When we are running with stable rotation speed, ignore signals that
     are too far from what we expect.
   */
-  if (period >= 13000000UL && period <= 17000000UL)
+  if (period >= 11000000UL && period <= 19000000UL)
   {
     uint32_t olddel = b >= a ? b - a : a - b;
     uint32_t newdel = period >= a ? period - a : a - period;
@@ -419,9 +420,9 @@ record_hall_sensor(uint32_t timer_val)
       Avoid errorneously skipping when we are changing speed, by accepting
       jitter in period up to 3 times the difference between last two periods.
 
-      Otherwise discard a period that is more than 2% off the last one.
+      Otherwise discard a period that is more than 1% off the last one.
     */
-    if (newdel > olddel * 3 && newdel > a / 50)
+    if (newdel > olddel * 3 && newdel > a / 100)
     {
       //tlog(4, period);
       return 0;
@@ -519,7 +520,13 @@ setup_pwm_GSCLK2_n_timer(void)
   ROM_TimerMatchSet(TIMER2_BASE, TIMER_A, 1);
 
   /* Set timer interrupt at GSCLK PWM period. */
-  ROM_TimerLoadSet(TIMER2_BASE, TIMER_B, 4*4096);
+  ROM_TimerLoadSet(TIMER2_BASE, TIMER_B, PWM_CYCLES);
+  /*
+    Set the ILD bit in timer2B config register, so that we can change the
+    timer period on-the-fly, and the new period length will take effect at the
+    start of the next period.
+  */
+  HWREG(TIMER2_BASE + TIMER_O_TBMR) |= TIMER_TBMR_TBILD;
 
   /* Enable interrrupts. */
   ROM_IntMasterEnable();
@@ -1802,6 +1809,8 @@ IntHandlerTimer2B(void)
   uint32_t tmp;
 #ifdef FAKE_HALL_SENSOR
   static uint32_t fake_hall_counter = 0;
+#else
+  uint32_t since_hall;
 #endif
 
   if (!(HWREG(TIMER2_BASE + TIMER_O_MIS) & TIMER_TIMB_TIMEOUT))
@@ -1860,7 +1869,35 @@ IntHandlerTimer2B(void)
     This timer interrupt we are writing the data into the buffer, the next
     interrupt we will shift it out, so latch will be in two timer periods.
   */
-  estim_latch_time = current_time - 2*4*4096;
+  estim_latch_time = current_time - 2*PWM_CYCLES;
+
+#ifndef FAKE_HALL_SENSOR
+  /*
+    Try to adjust for the rotation period not being an integer number of PWM
+    periods.
+
+    When the hall sensor triggers, we will increase the length of the
+    following PWM period, so that the latching of data starts at an integer
+    multiplum of the PWM period relative to the hall trigger. If the rotation
+    period (and hall trigger) is 100% stable, this will ensure that pixels
+    always start at the exact same point.
+
+    Since we generate scanlines two interrupts ahead of the latch, and shift
+    them out over SPI one interrupt ahead, when we detect the hall signal we
+    actually increase the length of the interrupt only two periods later.
+  */
+  since_hall = start_time-current_time;
+  if (since_hall < PWM_CYCLES)
+    estim_latch_time += PWM_CYCLES - since_hall;
+  else if (since_hall < 2*PWM_CYCLES)
+  {
+    estim_latch_time += 2*PWM_CYCLES - since_hall;
+    HWREG(TIMER2_BASE + TIMER_O_TBILR) = 3*PWM_CYCLES - since_hall;
+  }
+  else
+    HWREG(TIMER2_BASE + TIMER_O_TBILR) = PWM_CYCLES;
+#endif
+
   estim_delta = start_time - estim_latch_time;
   if (current_period < 1)
     current_period = 1;
