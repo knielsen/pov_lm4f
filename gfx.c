@@ -12,7 +12,14 @@
 /* Round up to a whole number of 32-bit words. */
 #define BM_SIZE_BYTES ((BM_SIZE_X*BM_SIZE_Y*BM_BITS + 31)/32*4)
 
-static uint8_t bitmap_array[3][BM_SIZE_BYTES];
+#define TRI_BM_SIZE_X 16
+#define TRI_BM_SIZE_Y 32
+#define TRI_BM_SIZE_BYTES (TRI_BM_SIZE_X*TRI_BM_SIZE_Y*(TRI_BM_SIZE_Y+1)/2)
+
+#if TRI_BM_SIZE_BYTES < BM_SIZE_BYTES
+#error Too small bitmap buffer
+#endif
+static uint8_t bitmap_array[3][TRI_BM_SIZE_BYTES];
 static uint32_t render_idx = 0;
 static uint32_t receive_idx = 1;
 

@@ -239,6 +239,8 @@ extern unsigned long _data;
 extern unsigned long _edata;
 extern unsigned long _bss;
 extern unsigned long _ebss;
+extern unsigned long _udma_ctl_start;
+extern unsigned long _udma_ctl_end;
 
 //*****************************************************************************
 //
@@ -265,17 +267,16 @@ ResetISR(void)
     }
 
     //
-    // Zero fill the bss segment.
+    // Zero fill the bss and udma_ctl segments.
     //
-    __asm("    ldr     r0, =_bss\n"
-          "    ldr     r1, =_ebss\n"
-          "    mov     r2, #0\n"
-          "    .thumb_func\n"
-          "zero_loop:\n"
-          "        cmp     r0, r1\n"
-          "        it      lt\n"
-          "        strlt   r2, [r0], #4\n"
-          "        blt     zero_loop");
+    pulSrc = &_bss;
+    pulDest = &_ebss;
+    while (pulSrc < pulDest)
+      *pulSrc++ = 0;
+    pulSrc = &_udma_ctl_start;
+    pulDest = &_udma_ctl_end;
+    while (pulSrc < pulDest)
+      *pulSrc++ = 0;
 
     //
     // Enable the floating-point unit.  This must be done here to handle the

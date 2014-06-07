@@ -818,7 +818,9 @@ try_again:
   config_spi_tlc_write(ssi_base, 8);
 }
 
-static uint32_t udma_control_block[256] __attribute__ ((aligned(1024)));
+static uint32_t udma_control_block[256]
+  __attribute__ ((section(".udma_ctl"), aligned(1024)));
+
 static void
 init_udma_for_tlc(void)
 {

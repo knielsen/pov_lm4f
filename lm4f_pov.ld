@@ -54,4 +54,11 @@ SECTIONS
         *(COMMON)
         _ebss = .;
     } > SRAM
+
+    .udma_ctl (NOLOAD) :
+    {
+        _udma_ctl_start = .;
+        *(.udma_ctl)
+        _udma_ctl_end = .;
+    } > SRAM
 }
