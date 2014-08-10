@@ -163,10 +163,6 @@ tlog(uint32_t tag, uint32_t val)
 }
 
 
-#ifndef M_PI
-#define M_PI 3.141592654f
-#endif
-
 static void
 serial_output_hexdig(uint32_t dig)
 {
@@ -1678,128 +1674,13 @@ start_receive_packets(uint32_t ssi_base, uint32_t csn_base,
 }
 
 
-static void
-set_led(uint8_t *buf, uint32_t idx, uint32_t red, uint32_t green, uint32_t blue)
-{
-  uint8_t *entry;
-
-  /*
-    On the first TLC, OUT0 is green, OUT1 is red, OUT2 is blue.
-
-    Since data is shifted out last-to-first, the first entry in the buffer is
-    the last blue LED, and the last entry is the first green LED.
-  */
-
-  idx = ((NUM_RGB_LEDS-1) - idx);
-  entry = buf + (idx*9)/2;
-  if (idx & 1)
-  {
-    entry[4] = green & 0xff;
-    entry[3] = (green >> 8) | ((red & 0xf) << 4);
-    entry[2] = red >> 4;
-    entry[1] = blue & 0xff;
-    entry[0] = (entry[0] & 0xf0) | (blue >> 8);
-  }
-  else
-  {
-    entry[4] = (entry[4] & 0xf) | ((green & 0xf) << 4);
-    entry[3] = green >> 4;
-    entry[2] = red & 0xff;
-    entry[1] = (red >> 8) | ((blue & 0xf) << 4);
-    entry[0] = blue >> 4;
-  }
-}
-
-
-static void
-gs_clear(uint8_t *buf)
-{
-  memset(buf, 0, TLC_GS_BYTES);
-}
-
-
- __attribute__ ((unused))
-static void
-anim1(uint8_t *buf, uint32_t count)
-{
-  static const uint32_t val = 4095;
-  gs_clear(buf);
-  switch ((count/450/NUM_RGB_LEDS)%3)
-  {
-  case 0:
-    set_led(buf, ((count/450) % NUM_RGB_LEDS), val, 0, 0);
-    break;
-  case 1:
-    set_led(buf, ((count/450) % NUM_RGB_LEDS), 0, val, 0);
-    break;
-  case 2:
-    set_led(buf, ((count/450) % NUM_RGB_LEDS), 0, 0, val);
-    break;
-  }
-}
-
- __attribute__ ((unused))
-static void
-anim2(uint8_t *buf, uint32_t count)
-{
-  uint32_t i;
-  gs_clear(buf);
-
-  for (i = 0; i < 32; ++i)
-  {
-    static const uint32_t speed = 100;
-    static const uint32_t W = 12*speed;
-    static const uint32_t value = 4095;
-
-    uint32_t v = (i*speed + count) % (W*6);
-    float rampdown = (value/2.0f)*(1.0f+cosf((v % W)*(float)(M_PI/W)));
-    float rampup = (value/2.0f)*(1.0f-cosf((v % W)*(float)(M_PI/W)));
-
-    switch (v/W)
-    {
-    case 0:
-      set_led(buf, i,     value,   rampup,        0);  break;
-    case 1:
-      set_led(buf, i, rampdown,     value,        0);  break;
-    case 2:
-      set_led(buf, i,        0,     value,   rampup);  break;
-    case 3:
-      set_led(buf, i,        0, rampdown,     value);  break;
-    case 4:
-      set_led(buf, i,   rampup,        0,     value);  break;
-    case 5:
-      set_led(buf, i,     value,        0, rampdown);  break;
-    }
-  }
-}
-
- __attribute__ ((unused))
-static void
-anim3(uint8_t *buf, uint32_t count)
-{
-  gs_clear(buf);
-  //set_led(buf, 0, 0, 0x0ff, 0);
-  //set_led(buf, 31, 0, 0, 0x100);
-  buf[0] = 0xff; buf[TLC_GS_BYTES-1] = 0xff;
-}
-
-
- __attribute__ ((unused))
-static void
-anim4(uint8_t *buf, uint32_t count)
-{
-  float angle = 2.0f*(float)M_PI*(count % 30000)/30000.0f;
-
-  bm_scanline(angle, 32, buf);
-}
-
-
 static volatile uint8_t do_next_frame = 0;
 static volatile uint8_t current_tlc_frame_buf = 0;
 static uint8_t tlc1_frame_buf[2][TLC_GS_BYTES];
 static uint8_t tlc2_frame_buf[2][TLC_GS_BYTES];
 static uint8_t tlc3_frame_buf[2][TLC_GS_BYTES];
-static float scanline_angle;
+static volatile float scanline_angle;
+static volatile float scanline_width_unity;
 
 void
 IntHandlerTimer2B(void)
@@ -1906,7 +1787,8 @@ IntHandlerTimer2B(void)
   if (estim_delta > current_period)
     estim_delta = current_period;
   scanline_angle =
-    (float)(2.0f*M_PI) * (float)estim_delta / (float)current_period;
+    (float)(2.0f*F_PI) * (float)estim_delta / (float)current_period;
+  scanline_width_unity = (float)PWM_CYCLES / (float)current_period;
   /*
     Trigger a software-interrupt to perform the actual scanline generation.
     (This is time-consuming, so we want it to be pre-emptable).
@@ -1951,7 +1833,10 @@ IntHandlerDMA(void)
 {
   uint32_t t_start, t_stop;
   uint8_t cur;
-  static const float ang_adj = M_PI*2.0f*(-29.0f)/360.0f;
+  static const float ang_adj = F_PI*2.0f*(-29.0f)/360.0f;
+  float angle = scanline_angle + ang_adj;
+  float angle_width = scanline_width_unity;
+
   /*
     This is not really related to DMA.
 
@@ -1969,9 +1854,9 @@ IntHandlerDMA(void)
 #ifdef HALL3
   t_start = HWREG(WTIMER5_BASE + TIMER_O_TAV);
 #endif
-  bm_scanline(scanline_angle+ang_adj, 32, tlc1_frame_buf[cur]);
-  bm_scanline(scanline_angle+ang_adj+(121.3f/180.0f*M_PI), 32, tlc2_frame_buf[cur]);
-  bm_scanline(scanline_angle+ang_adj+(2.0f*120.7051f/180.0f*M_PI), 32, tlc3_frame_buf[cur]);
+  bm_scanline(angle, angle_width, 32, tlc1_frame_buf[cur]);
+  bm_scanline(angle+(121.3f/180.0f*F_PI), angle_width, 32, tlc2_frame_buf[cur]);
+  bm_scanline(angle+(2.0f*120.7051f/180.0f*F_PI), angle_width, 32, tlc3_frame_buf[cur]);
 #ifdef HALL1
   t_stop = HWREG(WTIMER0_BASE + TIMER_O_TBV);
 #endif
@@ -2009,30 +1894,6 @@ IntHandlerSSI3(void)
   ROM_SSIIntClear(SSI_TLC3_BASE, ROM_SSIIntStatus(SSI_TLC3_BASE, 1));
   if (!ROM_uDMAChannelIsEnabled(SSI_TLC3_DMA))
     tlc3_udma_running = 0;
-}
-
-
- __attribute__ ((unused))
-static uint32_t
-mandelbrot_val(float cx, float cy, uint32_t N)
-{
-  float zx = 0;
-  float zy = 0;
-  uint32_t i = 1;
-
-  do
-  {
-    float a;
-
-    if (zx*zx + zy*zy > 4.0f)
-      break;
-    a = zx*zx - zy*zy + cx;
-    zy = 2*zx*zy + cy;
-    zx = a;
-    ++i;
-  } while (i <= N);
-
-  return i;
 }
 
 

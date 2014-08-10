@@ -14,20 +14,22 @@
 
 #define TRI_BM_SIZE_X 16
 #define TRI_BM_SIZE_Y 32
-#define TRI_BM_SIZE_BYTES (TRI_BM_SIZE_X*TRI_BM_SIZE_Y*(TRI_BM_SIZE_Y+1)/2)
+#define TRI_BM_SIZE_BYTES ((TRI_BM_SIZE_X*TRI_BM_SIZE_Y*(TRI_BM_SIZE_Y+1)/2*3+1)/2)
 
-#if TRI_BM_SIZE_BYTES < BM_SIZE_BYTES
+#if 2*TRI_BM_SIZE_BYTES < 3*BM_SIZE_BYTES
 #error Too small bitmap buffer
 #endif
-static uint8_t bitmap_array[3][TRI_BM_SIZE_BYTES];
+static uint8_t bitmap_array[2*TRI_BM_SIZE_BYTES];
 static uint32_t render_idx = 0;
 static uint32_t receive_idx = 1;
 
 
+uint8_t bm_mode = BM_MODE_RECT12;
+
+
 static inline uint16_t
-bm_get_pixel(uint8_t *bitmap, uint32_t x, uint32_t y)
+bm_get_pixel_idx(uint8_t *bitmap, uint32_t pix_idx)
 {
-  uint32_t pix_idx = y*BM_SIZE_X + x;
   uint32_t byte_idx = pix_idx + (pix_idx/2);
   uint16_t word = *(uint16_t *)&(bitmap[byte_idx]);
   if (pix_idx & 1)
@@ -35,6 +37,13 @@ bm_get_pixel(uint8_t *bitmap, uint32_t x, uint32_t y)
   else
     word &= 0xfff;
   return word;
+}
+
+
+static inline uint16_t
+bm_get_pixel(uint8_t *bitmap, uint32_t x, uint32_t y)
+{
+  return bm_get_pixel_idx(bitmap, y*BM_SIZE_X + x);
 }
 
 
@@ -91,14 +100,10 @@ unpack_b(uint16_t packed)
 }
 
 
-/*
-  This is the main routine that converts a scanline from the bitmap into
-  a vector of TLC5940 shift-out data.
-*/
-void
-bm_scanline(float angle, int32_t n, uint8_t *scanline_buf)
+static void
+bm_scanline_rect12(float angle, int32_t n, uint8_t *scanline_buf)
 {
-  uint8_t *bitmap = &bitmap_array[render_idx][0];
+  uint8_t *bitmap = &bitmap_array[BM_SIZE_BYTES*render_idx];
   /* The distiance between samples for two LEDs next to each other. */
   static const float step = 1.0f;
   /* The distance from the center to the first LED. */
@@ -159,6 +164,133 @@ bm_scanline(float angle, int32_t n, uint8_t *scanline_buf)
 }
 
 
+static void
+bm_scanline_tri12(float angle, float unity_width, int32_t n,
+                  uint8_t *scanline_buf)
+{
+  uint32_t r;
+  uint32_t ring_count, base_idx;
+  uint32_t first, last;
+  float angle1, angle2;
+  uint8_t *bitmap = &bitmap_array[render_idx*TRI_BM_SIZE_BYTES];
+
+  /* Sanity check, should be dead code. */
+  if (render_idx >= 2)
+    return;
+
+  /* ToDo: Pass in angle in units of turns, instead. */
+  angle1 = angle/(float)(2.0f*F_PI);
+  angle2 = angle1 + unity_width;
+  if ((angle2 - angle1) >= 1.0f/(float)(TRI_BM_SIZE_X*TRI_BM_SIZE_Y))
+  {
+    /*
+      This means we are spinning too fast. One PWM period sweep can touch
+      more than two pixels in the tri-framebuffer.
+
+      The algorithm cannot handle averaging more than two pixels. So just
+      do single-point sampling instead.
+    */
+    angle2 = angle1;
+  }
+
+  while (angle >= 1.0f)
+    angle -= 1.0f;
+
+  /*
+    We scan outwards through each of the 32 rings.
+    In each ring, we consider the angular range that will be swept by the LED
+    during this PWM cycle. This range will intersect one or two pixels in the
+    tri-framebuffer. If one, then that gives the colour value directly; if two,
+    then the colour value is the weighted average corresponding to the fraction
+    of each pixel swept.
+  */
+
+  ring_count = TRI_BM_SIZE_X;
+  base_idx = 0;
+  r = 1;
+  last = 0;                          /* Redundant, but makes compiler happy */
+  while (r <= n)
+  {
+    uint32_t idx1;
+    int32_t int_a2;
+    uint32_t packed;
+    float a1, a2;
+
+    a1 = angle1*(float)ring_count;
+    a2 = angle2*(float)ring_count;
+    int_a2 = (int32_t)a2;
+    if ((float)int_a2 <= a1)
+    {
+      /* Just a single pixel. */
+      idx1 = base_idx + int_a2;
+      packed = bm_get_pixel_idx(bitmap, idx1);
+    }
+    else
+    {
+      /* Weighted average of two pixels. */
+      uint32_t packed1, packed2;
+      uint32_t idx2;
+      float frac1, frac2;
+
+      frac2 = (a2 - (float)int_a2)/(a2 - a1);
+      frac1 = 1.0f - frac2;
+      idx2 = base_idx + int_a2;
+      idx1 = idx2 - 1;
+      packed1 = bm_get_pixel_idx(bitmap, idx1);
+      packed2 = bm_get_pixel_idx(bitmap, idx2);
+      /*
+        ToDo: If we were to do the weighted average on the TLC PWM values,
+        which are 12 bit, instead of computing a 4-bit RGB value, we would
+        get higher accuracy. But this does not take into account the rather
+        high gamma correction of the RGB-to-PWM conversion, and anyway this
+        code is much simpler.
+      */
+      packed = pack_col((int32_t)(0.5f + frac1*(float)unpack_r(packed1)
+                                       + frac2*(float)unpack_r(packed2)),
+                        (int32_t)(0.5f + frac1*(float)unpack_g(packed1)
+                                       + frac2*(float)unpack_g(packed2)),
+                        (int32_t)(0.5f + frac1*(float)unpack_b(packed1)
+                                       + frac2*(float)unpack_b(packed2)));
+    }
+
+    if (r %2)
+    {
+      first = tlc_lookup_even[packed][0];
+      last = tlc_lookup_even[packed][1];
+      *(uint32_t *)scanline_buf = first;
+      scanline_buf += 4;
+    }
+    else
+    {
+      first = tlc_lookup_odd[packed][0];
+      *(uint32_t *)scanline_buf = last | first;
+      scanline_buf += 4;
+      last = tlc_lookup_odd[packed][1];
+      *scanline_buf = last;
+      scanline_buf += 1;
+    }
+
+    base_idx += ring_count;
+    ring_count += r*TRI_BM_SIZE_Y;
+    ++r;
+  }
+}
+
+
+/*
+  This is the main routine that converts a scanline from the bitmap into
+  a vector of TLC5940 shift-out data.
+*/
+void
+bm_scanline(float angle, float unity_width, int32_t n, uint8_t *scanline_buf)
+{
+  if (bm_mode == BM_MODE_RECT12)
+    bm_scanline_rect12(angle, n, scanline_buf);
+  else if (bm_mode == BM_MODE_TRI12)
+    bm_scanline_tri12(angle, unity_width, n, scanline_buf);
+}
+
+
 static uint8_t last_run_num = 0;
 
 void
@@ -175,7 +307,7 @@ accept_packet(uint8_t *packet)
   }
 
   /* Copy the received bytes into the appropriate place in the bitmap. */
-  buf = &bitmap_array[receive_idx][0];
+  buf = &bitmap_array[BM_SIZE_BYTES*receive_idx];
   offset = (uint32_t)run_num * 31;
   for (i = 0; i < 31 && i+offset < BM_SIZE_BYTES; ++i)
     buf[i+offset] = packet[i+1];
@@ -221,7 +353,7 @@ bm_put_disk(uint8_t *bitmap, int32_t cx, int32_t cy, int32_t r,
 void
 generate_test_image(void)
 {
-  uint8_t *bitmap = &bitmap_array[render_idx][0];
+  uint8_t *bitmap = &bitmap_array[BM_SIZE_BYTES*render_idx];
 /*
   Three disks, one of each colour red, blue, green.
 */
