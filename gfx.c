@@ -164,6 +164,10 @@ bm_scanline_rect12(float angle, int32_t n, uint8_t *scanline_buf)
 }
 
 
+/*
+  Generate a scanline for a row of LEDs at a specific angle, from a
+  framebuffer in the radial corrdinate format.
+*/
 static void
 bm_scanline_tri12(float angle, float unity_width, int32_t n,
                   uint8_t *scanline_buf)
@@ -311,6 +315,17 @@ accept_packet(uint8_t *packet)
   offset = (uint32_t)run_num * 31;
   for (i = 0; i < 31 && i+offset < BM_SIZE_BYTES; ++i)
     buf[i+offset] = packet[i+1];
+
+  /*
+    In case of lost packet(s), copy from the previous received one to
+    minimise glitches.
+  */
+  if (run_num > last_run_num + 1)
+  {
+    uint8_t *old_buf = &bitmap_array[BM_SIZE_BYTES*render_idx];
+    for (i = ((uint32_t)last_run_num+1)*31; i < offset; ++i)
+      buf[i] = old_buf[i];
+  }
 
   if (run_num == 204)
   {
