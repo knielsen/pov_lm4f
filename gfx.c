@@ -25,6 +25,7 @@ static uint32_t receive_idx = 1;
 
 
 uint8_t bm_mode = BM_MODE_RECT12;
+//uint8_t bm_mode = BM_MODE_TRI12;
 
 
 static inline uint16_t
@@ -48,9 +49,8 @@ bm_get_pixel(uint8_t *bitmap, uint32_t x, uint32_t y)
 
 
 static inline void
-bm_put_pixel(uint8_t *bitmap, uint16_t x, uint16_t y, uint16_t packed_col)
+bm_put_pixel_idx(uint8_t *bitmap, uint32_t pix_idx, uint16_t packed_col)
 {
-  uint32_t pix_idx = y*BM_SIZE_X + x;
   uint32_t byte_idx = pix_idx + (pix_idx/2);
   uint16_t *p = (uint16_t *)&(bitmap[byte_idx]);
   if (pix_idx & 1)
@@ -58,6 +58,21 @@ bm_put_pixel(uint8_t *bitmap, uint16_t x, uint16_t y, uint16_t packed_col)
   else
     *p = (*p & 0xf000) | (packed_col);
 }
+
+
+static inline void
+bm_put_pixel(uint8_t *bitmap, uint16_t x, uint16_t y, uint16_t packed_col)
+{
+  bm_put_pixel_idx(bitmap, y*BM_SIZE_X + x, packed_col);
+}
+
+
+static void
+tri_bm_put_pixel(uint8_t *bitmap, uint32_t r, uint32_t a, uint16_t packed_col)
+{
+  bm_put_pixel_idx(bitmap, TRI_BM_SIZE_X*r*(r-1)/2 + a, packed_col);
+}
+
 
 static void
 bm_put_pixel_check(uint8_t *bitmap, uint16_t x, uint16_t y, uint16_t packed_col)
@@ -177,15 +192,16 @@ bm_scanline_tri12(float angle, float unity_width, int32_t n,
   uint32_t first, last;
   float angle1, angle2;
   uint8_t *bitmap = &bitmap_array[render_idx*TRI_BM_SIZE_BYTES];
-
+  int even_odd;
   /* Sanity check, should be dead code. */
   if (render_idx >= 2)
     return;
 
   /* ToDo: Pass in angle in units of turns, instead. */
   angle1 = angle/(float)(2.0f*F_PI);
-  angle2 = angle1 + unity_width;
-  if ((angle2 - angle1) >= 1.0f/(float)(TRI_BM_SIZE_X*TRI_BM_SIZE_Y))
+  while (angle1 >= 1.0f)
+    angle1 -= 1.0f;
+  if (unity_width >= 1.0f/(float)(TRI_BM_SIZE_X*TRI_BM_SIZE_Y))
   {
     /*
       This means we are spinning too fast. One PWM period sweep can touch
@@ -196,9 +212,8 @@ bm_scanline_tri12(float angle, float unity_width, int32_t n,
     */
     angle2 = angle1;
   }
-
-  while (angle >= 1.0f)
-    angle -= 1.0f;
+  else
+    angle2 = angle1 + unity_width;
 
   /*
     We scan outwards through each of the 32 rings.
@@ -209,11 +224,12 @@ bm_scanline_tri12(float angle, float unity_width, int32_t n,
     of each pixel swept.
   */
 
-  ring_count = TRI_BM_SIZE_X;
-  base_idx = 0;
-  r = 1;
+  ring_count = TRI_BM_SIZE_X*n;
+  base_idx = TRI_BM_SIZE_X*n*(n-1)/2;
+  r = n;
+  even_odd = 1;
   last = 0;                          /* Redundant, but makes compiler happy */
-  while (r <= n)
+  while (r > 0)
   {
     uint32_t idx1;
     int32_t int_a2;
@@ -257,12 +273,13 @@ bm_scanline_tri12(float angle, float unity_width, int32_t n,
                                        + frac2*(float)unpack_b(packed2)));
     }
 
-    if (r %2)
+    if (even_odd)
     {
       first = tlc_lookup_even[packed][0];
       last = tlc_lookup_even[packed][1];
       *(uint32_t *)scanline_buf = first;
       scanline_buf += 4;
+      even_odd = 0;
     }
     else
     {
@@ -272,11 +289,12 @@ bm_scanline_tri12(float angle, float unity_width, int32_t n,
       last = tlc_lookup_odd[packed][1];
       *scanline_buf = last;
       scanline_buf += 1;
+      even_odd = 1;
     }
 
-    base_idx += ring_count;
-    ring_count += r*TRI_BM_SIZE_Y;
-    ++r;
+    ring_count -= TRI_BM_SIZE_X;
+    base_idx -= ring_count;
+    --r;
   }
 }
 
@@ -352,6 +370,17 @@ bm_clear(uint8_t *bitmap)
 
 __attribute__ ((unused))
 static void
+tri_bm_clear(uint8_t *bitmap)
+{
+  uint32_t r, a;
+  for (r = 1; r <= TRI_BM_SIZE_X; ++r)
+    for (a = 0; a < r*TRI_BM_SIZE_Y; ++a)
+      tri_bm_put_pixel(bitmap, r, a, pack_col(0, 0, 0));
+}
+
+
+__attribute__ ((unused))
+static void
 bm_put_disk(uint8_t *bitmap, int32_t cx, int32_t cy, int32_t r,
             uint16_t packed_col)
 {
@@ -365,8 +394,9 @@ bm_put_disk(uint8_t *bitmap, int32_t cx, int32_t cy, int32_t r,
         bm_put_pixel_check(bitmap, x, y, packed_col);
 }
 
-void
-generate_test_image(void)
+
+static void
+generate_test_image_rect12(void)
 {
   uint8_t *bitmap = &bitmap_array[BM_SIZE_BYTES*render_idx];
 /*
@@ -442,4 +472,44 @@ generate_test_image(void)
     }
   }
 */
+}
+
+
+static void
+generate_test_image_tri12(void)
+{
+  uint8_t *bitmap = &bitmap_array[render_idx*TRI_BM_SIZE_BYTES];
+  uint32_t r, a;
+  uint32_t quarter_angle;
+
+  /* different colour gradients in each quadrant. */
+  tri_bm_clear(bitmap);
+
+  quarter_angle = 0;
+  for (r = 1; r <= TRI_BM_SIZE_Y; ++r)
+  {
+    quarter_angle += TRI_BM_SIZE_X/4;
+    for (a = 0; a < quarter_angle; ++a)
+    {
+      uint32_t v = (r-1) % 16;
+      uint16_t red = pack_col(v, 0, 0);
+      uint16_t green = pack_col(0, v, 0);
+      uint16_t blue = pack_col(0, 0, v);
+      uint16_t yellow = pack_col(v, v, v/4);
+      tri_bm_put_pixel(bitmap, r, a, red);
+      tri_bm_put_pixel(bitmap, r, a+quarter_angle, green);
+      tri_bm_put_pixel(bitmap, r, a+2*quarter_angle, blue);
+      tri_bm_put_pixel(bitmap, r, a+3*quarter_angle, yellow);
+    }
+  }
+}
+
+
+void
+generate_test_image(void)
+{
+  if (bm_mode == BM_MODE_RECT12)
+    generate_test_image_rect12();
+  else if (bm_mode == BM_MODE_TRI12)
+    generate_test_image_tri12();
 }
