@@ -199,8 +199,13 @@ bm_scanline_tri12(float angle, float unity_width, int32_t n,
 
   /* ToDo: Pass in angle in units of turns, instead. */
   angle1 = angle/(float)(2.0f*F_PI);
-  while (angle1 >= 1.0f)
-    angle1 -= 1.0f;
+  if (angle1 < 0.0f)
+    do
+      angle1 += 1.0f;
+    while (angle1 < 0.0f);
+  else
+    while (angle1 >= 1.0f)
+      angle1 -= 1.0f;
   if (unity_width >= 1.0f/(float)(TRI_BM_SIZE_X*TRI_BM_SIZE_Y))
   {
     /*
@@ -475,8 +480,9 @@ generate_test_image_rect12(void)
 }
 
 
+__attribute__ ((unused))
 static void
-generate_test_image_tri12(void)
+generate_test_image_tri12_quadrants(void)
 {
   uint8_t *bitmap = &bitmap_array[render_idx*TRI_BM_SIZE_BYTES];
   uint32_t r, a;
@@ -505,11 +511,39 @@ generate_test_image_tri12(void)
 }
 
 
+__attribute__ ((unused))
+static void
+generate_test_image_tri12_checker(void)
+{
+  uint8_t *bitmap = &bitmap_array[render_idx*TRI_BM_SIZE_BYTES];
+  uint32_t r, a;
+  uint32_t ring_count;
+
+  /* different colour gradients in each quadrant. */
+  tri_bm_clear(bitmap);
+
+  ring_count = 0;
+  for (r = 1; r <= TRI_BM_SIZE_Y; ++r)
+  {
+    ring_count += TRI_BM_SIZE_X;
+    for (a = 0; a < ring_count; ++a)
+    {
+      tri_bm_put_pixel(bitmap, r, a, a%5!=2 ? 0x000 : 0xfff);
+    }
+  }
+}
+
+
 void
 generate_test_image(void)
 {
   if (bm_mode == BM_MODE_RECT12)
+  {
     generate_test_image_rect12();
+  }
   else if (bm_mode == BM_MODE_TRI12)
-    generate_test_image_tri12();
+  {
+    //generate_test_image_tri12_quadrants();
+    generate_test_image_tri12_checker();
+  }
 }
