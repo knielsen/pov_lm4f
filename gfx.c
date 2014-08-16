@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <string.h>
 #include <math.h>
 
 #include "gfx.h"
@@ -20,12 +21,87 @@
 #error Too small bitmap buffer
 #endif
 static uint8_t bitmap_array[2*TRI_BM_SIZE_BYTES];
-static uint32_t render_idx = 0;
+static volatile uint32_t render_idx = 0;
 static uint32_t receive_idx = 1;
 
 
-uint8_t bm_mode = BM_MODE_RECT12;
-//uint8_t bm_mode = BM_MODE_TRI12;
+//uint8_t bm_mode = BM_MODE_RECT12;
+uint8_t bm_mode = BM_MODE_TRI12;
+
+
+#include "sintable_1024.c"
+
+static float
+fast_sin_mod1024(uint32_t angle_mod1024)
+{
+  return sintable_1024[angle_mod1024];
+}
+
+
+__attribute__((unused))
+static float
+fast_sin_unity(float unity_angle)
+{
+  float idx_f = unity_angle*1024.0f;
+  uint32_t idx_i = (uint32_t)(idx_f >= 0 ? idx_f + 0.5f : idx_f - 0.5f);
+  return fast_sin_mod1024(idx_i & 1023);
+}
+
+
+__attribute__((unused))
+static float
+fast_cos_unity(float unity_angle)
+{
+  float idx_f = unity_angle*1024.0f;
+  uint32_t idx_i = (uint32_t)(idx_f >= 0 ? idx_f + 0.5f : idx_f - 0.5f);
+  return fast_sin_mod1024((idx_i+256) & 1023);
+}
+
+
+static uint16_t palette1_red_yellow[] = {
+  0x02d,
+  0x03d,
+  0x03e,
+  0x04e,
+  0x05e,
+  0x16f,
+  0x17f,
+  0x18f,
+  0x19f,
+  0x1af,
+  0x1bf,
+  0x2cf,
+  0x2df,
+  0x2ef,
+  0x2ff,
+  0x2ff,
+  0x2ef,
+  0x1df,
+  0x1cf,
+  0x2cf,
+  0x2bf,
+  0x2af,
+  0x29f,
+  0x38f,
+  0x37f,
+  0x36f,
+  0x35f,
+  0x34f,
+  0x33e,
+  0x23e,
+  0x12e,
+  0x01d
+};
+
+
+static uint32_t
+tri_fb_idx(uint32_t r, uint32_t a)
+{
+#if TRI_BM_SIZE_X % 2 != 0
+#error Following formulae assumes that TRI_BM_SIZE_X is even
+#endif
+  return a+r*(r-1)*(TRI_BM_SIZE_X/2);
+}
 
 
 static inline uint16_t
@@ -70,7 +146,7 @@ bm_put_pixel(uint8_t *bitmap, uint16_t x, uint16_t y, uint16_t packed_col)
 static void
 tri_bm_put_pixel(uint8_t *bitmap, uint32_t r, uint32_t a, uint16_t packed_col)
 {
-  bm_put_pixel_idx(bitmap, TRI_BM_SIZE_X*r*(r-1)/2 + a, packed_col);
+  bm_put_pixel_idx(bitmap, tri_fb_idx(r, a), packed_col);
 }
 
 
@@ -112,6 +188,279 @@ static inline uint16_t
 unpack_b(uint16_t packed)
 {
   return packed >> 8;
+}
+
+
+static uint32_t
+blend(uint32_t rgb1, uint32_t r2, uint32_t g2, uint32_t b2, float intensity2)
+{
+  uint32_t r1 = rgb1 & 0xf;
+  uint32_t g1 = (rgb1 >> 4) & 0xf;
+  uint32_t b1 = rgb1 >> 8;
+  uint32_t saturate = 15 - (uint32_t)(intensity2 * 15.99f);
+  if (r1 > saturate)
+    r1 = saturate;
+  if (g1 > saturate)
+    g1 = saturate;
+  if (b1 > saturate)
+    b1 = saturate;
+  return pack_col(r1+r2, g1+g2, b1+b2);
+}
+
+
+#include "font_addsbp.c"
+#include "font_tonc.c"
+//#define FONT_TO_USE addsbp_font
+#define FONT_TO_USE tonc_font
+
+
+static void
+draw_char_aa(uint8_t *fb, char c, uint32_t r, uint32_t a,
+             uint32_t col_r, uint32_t col_g, uint32_t col_b,
+             const uint32_t r_offsets[8])
+{
+  float x_start, x_end, recip_font_pix_size;
+  uint32_t i;
+  const uint8_t *p;
+  uint32_t ring_count = r*TRI_BM_SIZE_X;
+  float fcol_r = (float)col_r+0.99f;
+  float fcol_g = (float)col_g+0.99f;
+  float fcol_b = (float)col_b+0.99f;
+  uint32_t limit_i;
+  uint32_t max_offset_r;
+
+  if (c < ' ' || c > 127 || r < 1 || r > TRI_BM_SIZE_Y || a >= ring_count)
+    return;
+  p = &FONT_TO_USE[8*(c-' ')];
+
+  max_offset_r = r_offsets[0];
+  for (i = 1; i < 8; ++i)
+    if (max_offset_r < r_offsets[i])
+      max_offset_r = r_offsets[i];
+
+  /* Get the start position, as a fraction [0,1). */
+  x_start = (float)a/(float)ring_count;
+  x_end = (float)(a+8)/(float)ring_count;
+  recip_font_pix_size = 8.0f/(x_end-x_start);
+
+  /* Loop over 8 rings, inner to outer. */
+  limit_i = 8+max_offset_r;
+  if (r + limit_i > TRI_BM_SIZE_Y+1)
+    limit_i = (TRI_BM_SIZE_Y+1) - r;
+  for (i = 0; i < limit_i; ++i)
+  {
+    uint32_t a_pos;
+    float pix_width = 1.0f/(float)ring_count;
+    float x, font_x, font_pix_inc;
+    uint32_t font_in;
+    uint32_t fb_idx;
+    uint32_t font_bit;
+    uint32_t font_l;
+
+    font_bit = 0;
+
+    /* Find the first pixel that overlaps with angle a. */
+    a_pos = (uint32_t)(x_start*ring_count);
+    fb_idx = tri_fb_idx(r, a_pos);
+
+    x = (float)a_pos*pix_width;
+    font_x = (x-x_start)*recip_font_pix_size;
+    font_pix_inc = pix_width*recip_font_pix_size;
+    if (font_x < 0.0f)
+    {
+      font_x += 1.0f;
+      --font_bit;
+      font_l = 0;
+    }
+    else
+      font_l = i-r_offsets[font_bit];
+    font_in = (font_l < 8 && font_bit < 8 ? (p[7-font_l]>>font_bit) & 1 : 0);
+
+    /* Loop, processing all pixels that touch the character area. */
+    while (font_bit != 8)
+    {
+      float in;
+
+      font_x = font_x + font_pix_inc;
+
+      if (font_x >= 1.0f)
+      {
+        font_x -= 1.0f;
+        ++font_bit;
+        font_l = (font_bit < 8 ? i-r_offsets[font_bit] : 0);
+        in = (float)font_in * (1.0f-font_x);
+        font_in = (font_l < 8 && font_bit < 8 ? (p[7-font_l]>>font_bit) & 1 : 0);
+        in += (float)font_in * font_x;
+      }
+      else
+        in = (float)font_in;
+
+      if (in > 0.0f)
+        bm_put_pixel_idx(fb, fb_idx, blend(bm_get_pixel_idx(fb, fb_idx),
+                                           (uint32_t)(in*fcol_r),
+                                           (uint32_t)(in*fcol_g),
+                                           (uint32_t)(in*fcol_b), in));
+      ++a_pos;
+      ++fb_idx;
+      if (a_pos >= ring_count)
+      {
+        a_pos -= ring_count;
+        fb_idx -= ring_count;
+      }
+    }
+    ++r;
+    ring_count += TRI_BM_SIZE_X;
+  }
+}
+
+
+__attribute__ ((unused))
+static void
+draw_string(uint8_t *fb, const char *s, uint32_t r, uint32_t a,
+            uint32_t col_r, uint32_t col_g, uint32_t col_b)
+{
+  uint32_t i = strlen(s);
+  static const uint32_t offsets[8] = {0, 0, 0, 0, 0, 0, 0, 0};
+  while (i > 0)
+  {
+    --i;
+    draw_char_aa(fb, s[i], r, a, col_r, col_g, col_b, offsets);
+    a += 8;
+    if (a >= r*TRI_BM_SIZE_X)
+      a -= r*TRI_BM_SIZE_X;
+  }
+}
+
+
+__attribute__((unused))
+static void
+scrolltext1(uint8_t *fb, uint32_t c, const char *text)
+{
+  const uint32_t len = strlen(text);
+  static const uint32_t base_r = 21;
+  static const uint32_t max_a = base_r*TRI_BM_SIZE_X;
+  static const uint32_t ramp_in = 38;
+  static const uint32_t bounce_interval = 19;
+  static const uint32_t bounce_duration = 14;
+  static const uint32_t bounce_size = 70;
+  static const float bounce_height = 6.4f;
+  uint32_t r, a;
+  uint32_t i;
+  uint32_t t = c;
+  int32_t idx;
+  uint32_t offsets[8];
+  uint32_t offset_idx;
+  uint32_t frac_t;
+  uint32_t bounce_t, bounce_a;
+
+  for (i = 0; i < 8; ++i)
+    offsets[i] = TRI_BM_SIZE_Y;
+
+  r = base_r;
+  a = r*TRI_BM_SIZE_X*3/4;
+  idx = t/8;
+
+  bounce_t = t % bounce_interval;
+  if (bounce_t < bounce_duration)
+    bounce_a = max_a*3/4 + max_a/5 + (max_a*3/(5*42))*(((t/bounce_interval)*29)%43);
+
+  frac_t = t%8;
+  offset_idx = 7 - frac_t;
+  for (i = 0; i < max_a; ++i)
+  {
+    uint32_t col_r, col_g, col_b;
+
+    if (i <= ramp_in)
+      offsets[offset_idx] = (ramp_in-i)/(ramp_in/(TRI_BM_SIZE_Y-base_r));
+    else if ((max_a-1-i) <= ramp_in)
+      offsets[offset_idx] = (ramp_in-(max_a-1-i))/(ramp_in/(TRI_BM_SIZE_Y-base_r));
+    else if (bounce_t < bounce_duration && (bounce_a - a)%max_a < bounce_size)
+    {
+      float v1, v2, amplitude;
+      int32_t offset;
+      v1 = (float)((bounce_a - a)%max_a) / (float)(2*(bounce_size-1));
+      v2 = (float)(bounce_t) / (float)(2*(bounce_duration-1));
+      amplitude = fast_sin_unity(v2);
+      offset = bounce_height*amplitude*fast_sin_unity(v1);
+      if (offset < 0)
+        offset = 0;
+      offsets[offset_idx] = offset;
+    }
+    else
+      offsets[offset_idx] = 0;
+
+    if (frac_t == i%8)
+    {
+      uint32_t str_idx;
+      col_r = 0;
+      col_g = 0;
+      col_b = 10;
+      if (idx >= 0 && (str_idx = idx % (len + 10)) < len)
+      {
+        draw_char_aa(fb, text[str_idx], r, a, col_r, col_g, col_b, offsets);
+      }
+      --idx;
+      offset_idx = 0;
+    }
+    else
+      ++offset_idx;
+
+    ++a;
+    if (a >= r*TRI_BM_SIZE_X)
+      a -= r*TRI_BM_SIZE_X;
+    ++t;
+  }
+}
+
+
+static float
+distance(float x1, float y1, float x2, float y2)
+{
+  float dx = x2 - x1;
+  float dy = y2 - y1;
+  return sqrtf(dx*dx + dy*dy);
+}
+
+
+__attribute__((unused))
+static void
+plasma1(uint8_t *fb, uint32_t c)
+{
+  uint32_t r, a;
+  uint32_t idx = 0;
+  uint32_t ring_count = 0;
+
+  for (r = 1; r <= TRI_BM_SIZE_Y; ++r)
+  {
+    float unity_fact = (1.0f/(float)TRI_BM_SIZE_X)/r;
+    ring_count += TRI_BM_SIZE_X;
+    for (a = 0; a < ring_count; ++a)
+    {
+      float a_unity, t;
+      float x, y, d1, d2;
+      uint32_t palette_idx;
+      uint32_t packed_col;
+      float c1, c2, c3;
+
+      a_unity = (float)a * unity_fact;
+      x = ((float)r-0.5f)*fast_cos_unity(a_unity);
+      y = ((float)r-0.5f)*fast_sin_unity(a_unity);
+      d1 = distance(x, y, -25.6f, -19.2f);
+      d2 = distance(x, y, 12.8f, 25.6f);
+
+      t = (float)(c%(12*1024)) * (2.0f/1024.0f);
+      c1 = fast_sin_unity(d1*fast_cos_unity(t)*0.04f + t*4.0f);
+      c2 = fast_cos_unity(y*0.02f+t*3.0f);
+      c3 = fast_cos_unity(d2*0.035f) + fast_sin_unity(t);
+
+      palette_idx = (uint32_t)((c1+c2+c3+4.0f)*(32.0f/3.0f));
+      packed_col = palette1_red_yellow[palette_idx %
+            (sizeof(palette1_red_yellow)/sizeof(palette1_red_yellow[0]))];
+
+      bm_put_pixel_idx(fb, idx, packed_col);
+      ++idx;
+    }
+  }
 }
 
 
@@ -198,7 +547,7 @@ bm_scanline_tri12(float angle, float unity_width, int32_t n,
     return;
 
   /* ToDo: Pass in angle in units of turns, instead. */
-  angle1 = angle/(float)(2.0f*F_PI);
+  angle1 = -angle/(float)(2.0f*F_PI);
   if (angle1 < 0.0f)
     do
       angle1 += 1.0f;
@@ -230,7 +579,7 @@ bm_scanline_tri12(float angle, float unity_width, int32_t n,
   */
 
   ring_count = TRI_BM_SIZE_X*n;
-  base_idx = TRI_BM_SIZE_X*n*(n-1)/2;
+  base_idx = tri_fb_idx(n, 0);
   r = n;
   even_odd = 1;
   last = 0;                          /* Redundant, but makes compiler happy */
@@ -326,6 +675,9 @@ accept_packet(uint8_t *packet)
   uint8_t *buf;
   uint32_t i, offset;
   uint8_t run_num = packet[0];
+
+  if (bm_mode != BM_MODE_RECT12)
+    return;
   if (run_num < last_run_num)
   {
     /* Full frame received, though last packet was lost. */
@@ -534,6 +886,24 @@ generate_test_image_tri12_checker(void)
 }
 
 
+__attribute__ ((unused))
+static void
+generate_test_image_tri12_plasma(uint32_t idx, uint32_t counter, const char *t)
+{
+  uint8_t *bitmap = &bitmap_array[idx*TRI_BM_SIZE_BYTES];
+
+  /* different colour gradients in each quadrant. */
+  plasma1(bitmap, counter);
+  scrolltext1(bitmap, counter,
+              "Asger og Lasse er de BEDSTE!!!   "
+              "TM4C1232 @ 80 MHz, 32 kB RAM   "
+              "Labitat for the win!!!  "
+              "My LED cube goes to ELEVEN!");
+  if (t)
+    draw_string(bitmap, t, 13, 0, 10, 0, 10);
+}
+
+
 void
 generate_test_image(void)
 {
@@ -545,5 +915,23 @@ generate_test_image(void)
   {
     //generate_test_image_tri12_quadrants();
     generate_test_image_tri12_checker();
+    generate_test_image_tri12_plasma(render_idx, 200, NULL);
+  }
+}
+
+
+void
+next_anim_frame(const char *extra_text)
+{
+  static uint32_t counter = 0;
+  if (bm_mode == BM_MODE_RECT12)
+  {
+  }
+  else if (bm_mode == BM_MODE_TRI12)
+  {
+    uint32_t idx = receive_idx;
+    generate_test_image_tri12_plasma(idx, counter++, extra_text);
+    render_idx = idx;
+    receive_idx = 1 - idx;
   }
 }

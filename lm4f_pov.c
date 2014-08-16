@@ -188,11 +188,10 @@ serial_output_str(const char *str)
 }
 
 
- __attribute__ ((unused))
-static void
-println_uint32(uint32_t val)
+__attribute__ ((unused))
+static char *
+uint32_tostring(char *buf, uint32_t val)
 {
-  char buf[13];
   char *p = buf;
   uint32_t l, d;
 
@@ -208,6 +207,17 @@ println_uint32(uint32_t val)
     l /= 10;
   } while (l > 0);
 
+  *p = '\0';
+  return p;
+}
+
+
+ __attribute__ ((unused))
+static void
+println_uint32(uint32_t val)
+{
+  char buf[13];
+  char *p = uint32_tostring(buf, val);
   *p++ = '\r';
   *p++ = '\n';
   *p = '\0';
@@ -1826,12 +1836,27 @@ IntHandlerTimer2B(void)
 }
 
 
-static volatile uint32_t scanline_time;
+static inline uint32_t
+hall_timer_value(void)
+{
+#ifdef HALL1
+  return HWREG(WTIMER0_BASE + TIMER_O_TBV);
+#endif
+#ifdef HALL2
+  return HWREG(WTIMER5_BASE + TIMER_O_TBV);
+#endif
+#ifdef HALL3
+  return HWREG(WTIMER5_BASE + TIMER_O_TAV);
+#endif
+}
+
+
+static volatile uint32_t scanline_time, max_scanline_time;
 
 void
 IntHandlerDMA(void)
 {
-  uint32_t t_start, t_stop;
+  uint32_t t_start, t_stop, t;
   uint8_t cur;
   static const float ang_adj = F_PI*2.0f*(-29.0f)/360.0f;
   float angle = scanline_angle + ang_adj;
@@ -1845,28 +1870,15 @@ IntHandlerDMA(void)
     scanline conversion (which is time-consuming).
   */
   cur = current_tlc_frame_buf;
-#ifdef HALL1
-  t_start = HWREG(WTIMER0_BASE + TIMER_O_TBV);
-#endif
-#ifdef HALL2
-  t_start = HWREG(WTIMER5_BASE + TIMER_O_TBV);
-#endif
-#ifdef HALL3
-  t_start = HWREG(WTIMER5_BASE + TIMER_O_TAV);
-#endif
+  t_start = hall_timer_value();
   bm_scanline(angle, angle_width, 32, tlc1_frame_buf[cur]);
   bm_scanline(angle+(121.3f/180.0f*F_PI), angle_width, 32, tlc2_frame_buf[cur]);
   bm_scanline(angle+(2.0f*120.7051f/180.0f*F_PI), angle_width, 32, tlc3_frame_buf[cur]);
-#ifdef HALL1
-  t_stop = HWREG(WTIMER0_BASE + TIMER_O_TBV);
-#endif
-#ifdef HALL2
-  t_stop = HWREG(WTIMER5_BASE + TIMER_O_TBV);
-#endif
-#ifdef HALL3
-  t_stop = HWREG(WTIMER5_BASE + TIMER_O_TAV);
-#endif
-  scanline_time = t_start - t_stop;
+  t_stop = hall_timer_value();
+  t = t_start - t_stop;
+  scanline_time = t;
+  if (t > max_scanline_time)
+    max_scanline_time = t;
 }
 
 
@@ -1899,6 +1911,8 @@ IntHandlerSSI3(void)
 
 int main()
 {
+  uint32_t last_frame_time = 0;
+
   /* Use the full 80MHz system clock. */
   ROM_SysCtlClockSet(SYSCTL_SYSDIV_2_5 | SYSCTL_USE_PLL |
                      SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
@@ -1997,21 +2011,26 @@ int main()
 
   serial_output_str("Starting main loop...\r\n");
   for (;;) {
-    static uint32_t prior_hall= 0xffffffffUL;
-    uint32_t hall;
+    uint32_t frame_start;
+    char text_buf[40];
+    char *p;
 
-    hall = last_hall;
-    if (hall != prior_hall)
-    {
-      ROM_UARTCharPut(UART0_BASE, '>');
-      println_float(last_hall_period/(float)MCU_HZ, 2, 4);
-      println_uint32(hall_int_counts);
-      prior_hall = hall;
+    p = text_buf;
+    *p++ = 's';
+    *p++ = 'l';
+    *p++ = '=';
+    p = uint32_tostring(p, scanline_time);
+    *p++ = '(';
+    p = uint32_tostring(p, max_scanline_time);
+    *p++ = ')';
+    *p++ = ' ';
+    *p++ = 'f';
+    *p++ = 'r';
+    *p++ = '=';
+    p = uint32_tostring(p, last_frame_time);
 
-      serial_output_str("scanline time: ");
-      println_uint32(scanline_time);
-      serial_output_str("packets: ");
-      println_uint32(packets_received_count);
-    }
+    frame_start = hall_timer_value();
+    next_anim_frame(0 /* text_buf */);
+    last_frame_time = frame_start - hall_timer_value();
   }
 }
