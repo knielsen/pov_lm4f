@@ -399,7 +399,7 @@ scrolltext1(uint8_t *fb, uint32_t c, const char *text)
       uint32_t str_idx;
       col_r = 0;
       col_g = 0;
-      col_b = 10;
+      col_b = 15;
       if (idx >= 0 && (str_idx = idx % (len + 10)) < len)
       {
         draw_char_aa(fb, text[str_idx], r, a, col_r, col_g, col_b, offsets);
