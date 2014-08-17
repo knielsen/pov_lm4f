@@ -38,12 +38,17 @@ fast_sin_mod1024(uint32_t angle_mod1024)
 }
 
 
+/*
+  Compute approximate sine function, using table with no interpolation.
+  The argument is in unity angles, so a full period is length 1, not 2PI.
+  For speed, assumes that the angle is >= -16.
+*/
 __attribute__((unused))
 static float
 fast_sin_unity(float unity_angle)
 {
   float idx_f = unity_angle*1024.0f;
-  uint32_t idx_i = (uint32_t)(idx_f >= 0 ? idx_f + 0.5f : idx_f - 0.5f);
+  uint32_t idx_i = (uint32_t)(idx_f + 16384.5f);
   return fast_sin_mod1024(idx_i & 1023);
 }
 
@@ -53,7 +58,7 @@ static float
 fast_cos_unity(float unity_angle)
 {
   float idx_f = unity_angle*1024.0f;
-  uint32_t idx_i = (uint32_t)(idx_f >= 0 ? idx_f + 0.5f : idx_f - 0.5f);
+  uint32_t idx_i = (uint32_t)(idx_f + 16384.5f);
   return fast_sin_mod1024((idx_i+256) & 1023);
 }
 
