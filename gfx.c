@@ -899,11 +899,17 @@ generate_test_image_tri12_plasma(uint32_t idx, uint32_t counter, const char *t)
 
   /* different colour gradients in each quadrant. */
   plasma1(bitmap, counter);
+  /* ToDo: I could add some simple but cool colour/blink control codes! */
   scrolltext1(bitmap, counter,
-              "Asger og Lasse er de BEDSTE!!!   "
-              "TM4C1232 @ 80 MHz, 32 kB RAM   "
-              "Labitat for the win!!!  "
-              "My LED cube goes to ELEVEN!");
+              "Welcome to LABITAT at the Made2014 Celebrations, held on "
+              "August 29-30! This is the POV fan by knielsen. Using 3 wings "
+              "each with 32 RGB LEDs, it has a display resolution of 65x65 "
+              "rectangular or 32 radial by 512 tangential polar. Colour depth "
+              "is 12 bit non-linear (4096 colours). Driven by the Texas "
+              "Instruments TM4C1232 microcontroller @ 80 MHz, 32 kB RAM, it "
+              "can display animations generated on-board, or video streamed "
+              "from a PC over nRf24L01+ wireless. Wireless transfer speed is "
+              "155 kByte/second.         My LED cube goes to ELEVEN!");
   if (t)
     draw_string(bitmap, t, 13, 0, 10, 0, 10);
 }
