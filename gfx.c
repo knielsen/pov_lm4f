@@ -2,6 +2,7 @@
 #include <string.h>
 #include <math.h>
 
+#include "pov_config.h"
 #include "gfx.h"
 
 #include "tlc_lookup.h"
@@ -23,10 +24,6 @@
 static uint8_t bitmap_array[2*TRI_BM_SIZE_BYTES];
 static volatile uint32_t render_idx = 0;
 static uint32_t receive_idx = 1;
-
-
-//uint8_t bm_mode = BM_MODE_RECT12;
-uint8_t bm_mode = BM_MODE_TRI12;
 
 
 #include "sintable_1024.c"

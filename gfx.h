@@ -14,7 +14,6 @@
 */
 #define BM_MODE_RECT12 0
 #define BM_MODE_TRI12 1
-extern uint8_t bm_mode;
 
 extern void bm_scanline(float angle, float unity_width, int32_t n,
                         uint8_t *scanline_buf);

@@ -19,11 +19,11 @@
 #include "driverlib/udma.h"
 #include "driverlib/interrupt.h"
 
+#include "pov_config.h"
 #include "gfx.h"
 #include "nrf24l01p.h"
 
 
-#define DC_VALUE 4
 #define NUM_LEDS 32
 #define LEDS_PER_TLC 16
 #define NUM_TLC ((NUM_LEDS*3+(LEDS_PER_TLC-1))/LEDS_PER_TLC)
@@ -1651,14 +1651,14 @@ IntHandlerSSI1(void)
 }
 
 
-static volatile uint32_t packets_received_count = 0;
-
 static void
 my_recv_cb(uint8_t *packet, void *data)
 {
   if (packet[0] == 255)
   {
     /* Command packet. */
+    if (packet[1] == 1)
+      pov_config_accept_packet(packet);
   }
   else if (packet[0] == 254)
   {
@@ -1668,8 +1668,6 @@ my_recv_cb(uint8_t *packet, void *data)
   }
   else
     accept_packet(packet);
-
-  ++packets_received_count;
 }
 
 
@@ -1912,6 +1910,7 @@ IntHandlerSSI3(void)
 int main()
 {
   uint32_t last_frame_time = 0;
+  int res;
 
   /* Use the full 80MHz system clock. */
   ROM_SysCtlClockSet(SYSCTL_SYSDIV_2_5 | SYSCTL_USE_PLL |
@@ -1933,6 +1932,17 @@ int main()
   ROM_UARTConfigSetExpClk(UART0_BASE, (ROM_SysCtlClockGet()), 500000,
                       (UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE |
                        UART_CONFIG_PAR_NONE));
+
+  /* Read the config from eeprom. */
+  serial_output_str("Serial configured, now reading config from EEPROM...\r\n");
+  res = pov_config_read();
+  if (res)
+  {
+    serial_output_str("Error from read config: ");
+    println_uint32(res);
+  }
+  serial_output_str("bm_mode="); println_uint32(bm_mode);
+  serial_output_str("dc_value="); println_uint32(dc_value);
 
   /* Set interrupts to use no sub-priorities. */
   ROM_IntPriorityGroupingSet(7);
@@ -1966,16 +1976,16 @@ int main()
   /* nRF24L01+ datasheet says to wait 100msec for bootup. */
   ROM_SysCtlDelay(MCU_HZ/3/10);
   serial_output_str("Loading TLC 1...\r\n");
-  init_tlc_dc(SSI_TLC1_BASE, DC_VALUE,
+  init_tlc_dc(SSI_TLC1_BASE, dc_value,
               GPIO_MODE1_BASE, GPIO_MODE1_PIN,
               GPIO_XLAT1_BASE, GPIO_XLAT1_PIN);
 #ifndef SINGLE_BLADE
   serial_output_str("Loading TLC 2...\r\n");
-  init_tlc_dc(SSI_TLC2_BASE, DC_VALUE,
+  init_tlc_dc(SSI_TLC2_BASE, dc_value,
               GPIO_MODE2_BASE, GPIO_MODE2_PIN,
               GPIO_XLAT2_BASE, GPIO_XLAT2_PIN);
   serial_output_str("Loading TLC 3...\r\n");
-  init_tlc_dc(SSI_TLC3_BASE, DC_VALUE,
+  init_tlc_dc(SSI_TLC3_BASE, dc_value,
               GPIO_MODE3_BASE, GPIO_MODE3_PIN,
               GPIO_XLAT3_BASE, GPIO_XLAT3_PIN);
 #endif
