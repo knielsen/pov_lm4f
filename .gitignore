@@ -3,3 +3,4 @@
 *.elf
 tlc_lookup.h
 *~
+*.s

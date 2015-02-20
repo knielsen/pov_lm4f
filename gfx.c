@@ -928,18 +928,66 @@ generate_test_image(void)
 }
 
 
+static uint32_t anim_frame_counter = 0;
+
 void
-next_anim_frame(const char *extra_text)
+gen_anim_frame(const char *extra_text)
 {
-  static uint32_t counter = 0;
+  uint32_t counter = anim_frame_counter;
+
   if (bm_mode == BM_MODE_RECT12)
   {
+    /*
+      Colour gradients.
+    */
+    uint32_t i, j;
+    uint32_t idx = receive_idx;
+    uint8_t *bitmap = &bitmap_array[BM_SIZE_BYTES*idx];
+
+    bm_clear(bitmap);
+    for (i= 0; i < BM_SIZE_X; ++i)
+    {
+      for (j = 0; j < BM_SIZE_Y; ++j)
+      {
+        uint32_t r, g, b;
+        b = i*15/BM_SIZE_X;
+        g = j*15/BM_SIZE_Y;
+        r = ((BM_SIZE_X-1-i) + (BM_SIZE_Y-1-j)) * 15 / (BM_SIZE_X + BM_SIZE_Y);
+        bm_put_pixel(bitmap, i, j, pack_col((r+counter/3) % 16, g, b));
+      }
+    }
   }
   else if (bm_mode == BM_MODE_TRI12)
   {
     uint32_t idx = receive_idx;
-    generate_test_image_tri12_plasma(idx, counter++, extra_text);
+    generate_test_image_tri12_plasma(idx, counter, extra_text);
+  }
+}
+
+
+void
+next_anim_frame(void)
+{
+  uint32_t idx = receive_idx;
+  if (bm_mode == BM_MODE_RECT12)
+  {
+    render_idx = idx;
+    receive_idx = (idx + 1) % 3;
+  }
+  else if (bm_mode == BM_MODE_TRI12)
+  {
     render_idx = idx;
     receive_idx = 1 - idx;
   }
+  ++anim_frame_counter;
+}
+
+
+void
+anim_reset(void)
+{
+  anim_frame_counter = 0;
+  memset(bitmap_array, 0, sizeof(bitmap_array));
+  render_idx = 0;
+  receive_idx = 1;
 }

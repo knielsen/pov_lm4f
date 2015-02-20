@@ -19,4 +19,6 @@ extern void bm_scanline(float angle, float unity_width, int32_t n,
                         uint8_t *scanline_buf);
 extern void generate_test_image(void);
 extern void accept_packet(uint8_t *packet);
-extern void next_anim_frame(const char *extra_text);
+extern void gen_anim_frame(const char *extra_text);
+extern void next_anim_frame(void);
+extern void anim_reset(void);

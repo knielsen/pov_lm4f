@@ -1431,7 +1431,7 @@ enum nrf_async_receive_multi_states {
   ST_NRF_ARM_A4
 };
 
-static int32_t
+static uint32_t
 nrf_async_receive_multi_cont(struct nrf_async_receive_multi *a,
                              uint32_t is_ssi_event);
 static int32_t
@@ -1476,8 +1476,11 @@ nrf_async_receive_multi_start(struct nrf_async_receive_multi *a,
   The two interrupts should be configured to have the same priority, so that
   one of them does not attempt to pre-empt the other; that would lead to
   nasty races.
+
+  Returns 1 if the nRF24L01+ is now idle (no packets pending in Rx FIFO), 0
+  if activity is still on-going.
 */
-static int32_t
+static uint32_t
 nrf_async_receive_multi_cont(struct nrf_async_receive_multi *a,
                              uint32_t is_ssi_event)
 {
@@ -1525,7 +1528,7 @@ resched:
       */
       a->state = ST_NRF_ARM_A1;
       ROM_GPIOPinIntEnable(a->irq_base, a->irq_pin);
-      return 0;
+      return 1;
     }
 
     /* The Rx FIFO is non-empty, so read a packet. */
@@ -1544,7 +1547,7 @@ resched:
 
   default:
     /* This shouldn't really happen ... */
-    return 0;
+    return 1;
   }
 }
 
@@ -1614,6 +1617,9 @@ config_nrf_interrupts(void)
 
 static struct nrf_async_receive_multi receive_multi_state;
 static volatile uint8_t receive_multi_running = 0;
+static volatile uint8_t nrf_irq_pending = 0;
+static volatile uint8_t nrf_last_activity = 0;
+static volatile uint8_t nrf_idle = 0;
 
 void
 IntHandlerGPIOb(void)
@@ -1624,8 +1630,7 @@ IntHandlerGPIOb(void)
     /* Rx IRQ. */
     if (receive_multi_running)
     {
-      if (nrf_async_receive_multi_cont(&receive_multi_state, 0))
-        receive_multi_running = 0;
+      nrf_idle = nrf_async_receive_multi_cont(&receive_multi_state, 0);
     }
     else
     {
@@ -1635,8 +1640,7 @@ IntHandlerGPIOb(void)
       */
       HWREG(GPIO_PORTB_BASE + GPIO_O_IM) &= ~GPIO_PIN_0 & 0xff;
       HWREG(GPIO_PORTB_BASE + GPIO_O_ICR) = GPIO_PIN_0;
-
-      serial_output_str("Rx: IRQ: RX_DR (spurious)\r\n");
+      nrf_irq_pending = 1;
     }
   }
 }
@@ -1645,15 +1649,30 @@ IntHandlerGPIOb(void)
 void
 IntHandlerSSI1(void)
 {
-  if (receive_multi_running &&
-      nrf_async_receive_multi_cont(&receive_multi_state, 1))
-    receive_multi_running = 0;
+  if (receive_multi_running)
+    nrf_idle = nrf_async_receive_multi_cont(&receive_multi_state, 1);
+}
+
+
+static inline uint32_t
+hall_timer_value(void)
+{
+#ifdef HALL1
+  return HWREG(WTIMER0_BASE + TIMER_O_TBV);
+#endif
+#ifdef HALL2
+  return HWREG(WTIMER5_BASE + TIMER_O_TBV);
+#endif
+#ifdef HALL3
+  return HWREG(WTIMER5_BASE + TIMER_O_TAV);
+#endif
 }
 
 
 static void
 my_recv_cb(uint8_t *packet, void *data)
 {
+  nrf_last_activity = hall_timer_value();
   if (packet[0] == 255)
   {
     /* Command packet. */
@@ -1675,7 +1694,9 @@ static void
 start_receive_packets(uint32_t ssi_base, uint32_t csn_base,
                       uint32_t csn_pin, uint32_t ce_base, uint32_t ce_pin)
 {
+  nrf_idle = 0;
   receive_multi_running = 1;
+  nrf_last_activity = hall_timer_value();
   nrf_async_receive_multi_start(&receive_multi_state, my_recv_cb, NULL,
                                 ssi_base, csn_base, csn_pin, ce_base, ce_pin,
                                 GPIO_PORTB_BASE, GPIO_PIN_0);
@@ -1689,6 +1710,7 @@ static uint8_t tlc2_frame_buf[2][TLC_GS_BYTES];
 static uint8_t tlc3_frame_buf[2][TLC_GS_BYTES];
 static volatile float scanline_angle;
 static volatile float scanline_width_unity;
+
 
 void
 IntHandlerTimer2B(void)
@@ -1729,15 +1751,7 @@ IntHandlerTimer2B(void)
   wait_for_spi_to_tlcs(&tlc2_udma_running, SSI_TLC2_BASE);
   wait_for_spi_to_tlcs(&tlc3_udma_running, SSI_TLC3_BASE);
   latch_data_to_tlcs();
-#ifdef HALL1
-  current_time = HWREG(WTIMER0_BASE + TIMER_O_TBV);
-#endif
-#ifdef HALL2
-  current_time = HWREG(WTIMER5_BASE + TIMER_O_TBV);
-#endif
-#ifdef HALL3
-  current_time = HWREG(WTIMER5_BASE + TIMER_O_TAV);
-#endif
+  current_time = hall_timer_value();
   start_time = last_hall;
   current_period = last_hall_period;
 
@@ -1834,21 +1848,6 @@ IntHandlerTimer2B(void)
 }
 
 
-static inline uint32_t
-hall_timer_value(void)
-{
-#ifdef HALL1
-  return HWREG(WTIMER0_BASE + TIMER_O_TBV);
-#endif
-#ifdef HALL2
-  return HWREG(WTIMER5_BASE + TIMER_O_TBV);
-#endif
-#ifdef HALL3
-  return HWREG(WTIMER5_BASE + TIMER_O_TAV);
-#endif
-}
-
-
 static volatile uint32_t scanline_time, max_scanline_time;
 
 void
@@ -1910,6 +1909,7 @@ IntHandlerSSI3(void)
 int main()
 {
   uint32_t last_frame_time = 0;
+  uint32_t last_time;
   int res;
 
   /* Use the full 80MHz system clock. */
@@ -2020,10 +2020,12 @@ int main()
   setup_pwm_GSCLK2_n_timer();
 
   serial_output_str("Starting main loop...\r\n");
+  last_time = hall_timer_value();
   for (;;) {
     uint32_t frame_start;
     char text_buf[40];
     char *p;
+    uint32_t now_time;
 
     p = text_buf;
     *p++ = 's';
@@ -2040,7 +2042,14 @@ int main()
     p = uint32_tostring(p, last_frame_time);
 
     frame_start = hall_timer_value();
-    next_anim_frame(0 /* text_buf */);
+    gen_anim_frame(0 /* text_buf */);
     last_frame_time = frame_start - hall_timer_value();
+
+    /* Constrain the frame rate. */
+    do {
+      now_time = hall_timer_value();
+    } while (last_time - now_time < MCU_HZ/50);
+    next_anim_frame();
+    last_time = now_time;
   }
 }
