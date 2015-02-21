@@ -31,6 +31,12 @@
 #define NUM_RGB_LEDS (NUM_TLC*LEDS_PER_TLC/3)
 #define PWM_CYCLES (4*4096)
 
+/* Switch back to SD card 1 msec after nRF24L01+ wireless command. */
+#define NRF_CMD_TIMEOUT (MCU_HZ/1000*1)
+/* Switch back to SD card 500 msec after nRF24L01+ wireless data. */
+#define NRF_DATA_TIMEOUT (MCU_HZ/1000*500)
+#define NRF_CHECK_INTERVAL NRF_CMD_TIMEOUT
+
 /*
   Useful for testing.
   When defined, the actual hall sensor is ignored, instead it fakes that
@@ -1434,7 +1440,7 @@ enum nrf_async_receive_multi_states {
 static uint32_t
 nrf_async_receive_multi_cont(struct nrf_async_receive_multi *a,
                              uint32_t is_ssi_event);
-static int32_t
+static uint32_t
 nrf_async_receive_multi_start(struct nrf_async_receive_multi *a,
                               void (*consumepacket)(uint8_t *, void *),
                               void *cb_data, uint32_t ssi_base,
@@ -1463,7 +1469,7 @@ nrf_async_receive_multi_start(struct nrf_async_receive_multi *a,
     ready in the Rx FIFO (RX_DR).
   */
   ROM_GPIOPinIntEnable(irq_base, irq_pin);
-  return 0;
+  return 1;
 }
 
 
@@ -1618,8 +1624,10 @@ config_nrf_interrupts(void)
 static struct nrf_async_receive_multi receive_multi_state;
 static volatile uint8_t receive_multi_running = 0;
 static volatile uint8_t nrf_irq_pending = 0;
-static volatile uint8_t nrf_last_activity = 0;
 static volatile uint8_t nrf_idle = 0;
+static volatile uint32_t nrf_last_activity = 0;
+static volatile uint32_t nrf_idle_timeout_value = NRF_CMD_TIMEOUT;
+
 
 void
 IntHandlerGPIOb(void)
@@ -1635,11 +1643,18 @@ IntHandlerGPIOb(void)
     else
     {
       /*
-        Clear the interrupt request and disable further interrupts until we can
-        clear the request from the device over SPI.
+        The SPI line is busy. Disable the interrupt for now, and set a flag
+        that it is pending. The main loop will see the flag when the SPI is
+        free, and then re-enable the interrupt to trigger it again (we leave
+        the interrupt pending in the GPIO).
+
+        This is an easy way to ensure that the delayed interrupt occurs in
+        the exact same environment as the non-delayed, however it assumes
+        that this is the only pin on GPIOB that we need an interrupt for.
+        Since we disable ALL GPIOB interrupts while the nRF24L01+ IRQ is
+        delayed.
       */
       HWREG(GPIO_PORTB_BASE + GPIO_O_IM) &= ~GPIO_PIN_0 & 0xff;
-      HWREG(GPIO_PORTB_BASE + GPIO_O_ICR) = GPIO_PIN_0;
       nrf_irq_pending = 1;
     }
   }
@@ -1669,6 +1684,58 @@ hall_timer_value(void)
 }
 
 
+/*
+  Handle using nRF24L01+ wireless vs. SD-card. These share a single SPI.
+
+  If nRF24L01+ is idle for a bit, then switch to reading from SD-card. This is
+  seen by nrf_idle being true, and nrf_last_activity being far enough back
+  in the past.
+
+  If new data arrives on the nRF24L01+ while reading from SD card, this is
+  seen by nrf_irq_pending being set by the IRQ handler. Then disable the SD
+  card and resume nRF24L01+ processing.
+*/
+static void
+check_nrf_sd(void)
+{
+  if (receive_multi_running)
+  {
+    static uint32_t last_check = 0;
+    uint32_t now = hall_timer_value();
+
+    if (!last_check)
+      last_check = now;
+
+    /* Don't disable interrupts too much for needles repeatedly checking. */
+    if ((last_check - now) >= NRF_CHECK_INTERVAL)
+    {
+      last_check = now;
+      ROM_IntMasterDisable();
+      if (nrf_idle)
+      {
+        if ((nrf_last_activity - now) >= nrf_idle_timeout_value)
+          receive_multi_running = 0;
+      }
+      ROM_IntMasterEnable();
+    }
+  }
+  else
+  {
+    if (nrf_irq_pending)
+    {
+      nrf_idle_timeout_value = NRF_CMD_TIMEOUT;
+      nrf_irq_pending = 0;
+      receive_multi_running = 1;
+      /*
+        Re-enable and re-trigger the nRF24L01+ interrupt that was postponed
+        while the SPI was in use by the SD card.
+      */
+      HWREG(GPIO_PORTB_BASE + GPIO_O_IM) |= (GPIO_PIN_0 & 0xff);
+    }
+  }
+}
+
+
 static void
 my_recv_cb(uint8_t *packet, void *data)
 {
@@ -1686,7 +1753,11 @@ my_recv_cb(uint8_t *packet, void *data)
       ROM_SysCtlReset();
   }
   else
+  {
+    /* Now that we got data from nRf24L01+ wireless, use a longer timeout. */
+    nrf_idle_timeout_value = NRF_DATA_TIMEOUT;
     accept_packet(packet);
+  }
 }
 
 
@@ -1694,12 +1765,12 @@ static void
 start_receive_packets(uint32_t ssi_base, uint32_t csn_base,
                       uint32_t csn_pin, uint32_t ce_base, uint32_t ce_pin)
 {
-  nrf_idle = 0;
   receive_multi_running = 1;
   nrf_last_activity = hall_timer_value();
-  nrf_async_receive_multi_start(&receive_multi_state, my_recv_cb, NULL,
-                                ssi_base, csn_base, csn_pin, ce_base, ce_pin,
-                                GPIO_PORTB_BASE, GPIO_PIN_0);
+  nrf_idle = nrf_async_receive_multi_start(&receive_multi_state, my_recv_cb,
+                                           NULL, ssi_base, csn_base, csn_pin,
+                                           ce_base, ce_pin,
+                                           GPIO_PORTB_BASE, GPIO_PIN_0);
 }
 
 
@@ -2004,8 +2075,6 @@ int main()
 #ifndef DISABLE_NRF
   nrf_init_config(1 /* Rx */, 2, nRF_RF_PWR_0DBM,
                   SSI1_BASE, GPIO_PORTF_BASE, GPIO_PIN_3);
-  /* Set Rx in receive mode. */
-  ce_high(GPIO_PORTB_BASE, GPIO_PIN_3);
 
   start_receive_packets(SSI1_BASE, GPIO_PORTF_BASE, GPIO_PIN_3,
                         GPIO_PORTB_BASE, GPIO_PIN_3);
@@ -2026,6 +2095,10 @@ int main()
     char text_buf[40];
     char *p;
     uint32_t now_time;
+
+    check_nrf_sd();
+    if (receive_multi_running)
+      continue;
 
     p = text_buf;
     *p++ = 's';
