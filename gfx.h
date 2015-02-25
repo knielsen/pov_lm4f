@@ -1,5 +1,3 @@
-#define F_PI 3.141592654f
-
 /*
   Current bitmap mode.
 
@@ -21,4 +19,5 @@ extern void generate_test_image(void);
 extern void accept_packet(uint8_t *packet);
 extern void gen_anim_frame(const char *extra_text);
 extern void next_anim_frame(void);
+extern uint8_t *get_anim_frame(uint32_t *size_p);
 extern void anim_reset(void);

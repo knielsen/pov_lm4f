@@ -2,6 +2,7 @@
 #include <string.h>
 #include <math.h>
 
+#include "pov.h"
 #include "pov_config.h"
 #include "gfx.h"
 
@@ -980,6 +981,34 @@ next_anim_frame(void)
     receive_idx = 1 - idx;
   }
   ++anim_frame_counter;
+}
+
+
+uint8_t *
+get_anim_frame(uint32_t *size_p)
+{
+  uint32_t idx = receive_idx;
+  uint8_t *bitmap;
+  uint32_t size;
+
+  if (bm_mode == BM_MODE_RECT12)
+  {
+    bitmap = &bitmap_array[BM_SIZE_BYTES*idx];
+    size = BM_SIZE_BYTES;
+  }
+  else if (bm_mode == BM_MODE_TRI12)
+  {
+    bitmap = &bitmap_array[idx*TRI_BM_SIZE_BYTES];
+    size = TRI_BM_SIZE_BYTES;
+  }
+  else
+  {
+    bitmap = bitmap_array;
+    size = 0;
+  }
+  if (size_p)
+    *size_p = size;
+  return bitmap;
 }
 
 

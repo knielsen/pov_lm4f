@@ -19,9 +19,12 @@
 #include "driverlib/udma.h"
 #include "driverlib/interrupt.h"
 
+#include "pov.h"
+#include "serial_dbg.h"
 #include "pov_config.h"
 #include "gfx.h"
 #include "nrf24l01p.h"
+#include "sdcard.h"
 
 
 #define NUM_LEDS 32
@@ -149,10 +152,6 @@
 #define SSI_TLC3_TX_CFG GPIO_PD3_SSI3TX
 #define SSI_TLC3_TX_PIN GPIO_PIN_3
 
-/* To change this, must fix clock setup in the code. */
-#define MCU_HZ 80000000
-
-
 
 /* A simple logging facility, a finite or cyclic buffer. */
 static uint32_t tb[64*2];
@@ -170,139 +169,24 @@ tlog(uint32_t tag, uint32_t val)
 
 
 static void
-serial_output_hexdig(uint32_t dig)
+config_led(void)
 {
-  ROM_UARTCharPut(UART0_BASE, (dig >= 10 ? 'A' - 10 + dig : '0' + dig));
+  ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOA);
+  ROM_GPIOPinTypeGPIOOutput(GPIO_PORTA_BASE, GPIO_PIN_7);
 }
 
 
-static void
-serial_output_hexbyte(uint8_t byte)
+void
+led_on(void)
 {
-  serial_output_hexdig(byte >> 4);
-  serial_output_hexdig(byte & 0xf);
+  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_7, GPIO_PIN_7);
 }
 
 
-static void
-serial_output_str(const char *str)
+void
+led_off(void)
 {
-  char c;
-
-  while ((c = *str++))
-    ROM_UARTCharPut(UART0_BASE, c);
-}
-
-
-__attribute__ ((unused))
-static char *
-uint32_tostring(char *buf, uint32_t val)
-{
-  char *p = buf;
-  uint32_t l, d;
-
-  l = 1000000000UL;
-  while (l > val && l > 1)
-    l /= 10;
-
-  do
-  {
-    d = val / l;
-    *p++ = '0' + d;
-    val -= d*l;
-    l /= 10;
-  } while (l > 0);
-
-  *p = '\0';
-  return p;
-}
-
-
- __attribute__ ((unused))
-static void
-println_uint32(uint32_t val)
-{
-  char buf[13];
-  char *p = uint32_tostring(buf, val);
-  *p++ = '\r';
-  *p++ = '\n';
-  *p = '\0';
-  serial_output_str(buf);
-}
-
-
-static void
-float_to_str(char *buf, float f, uint32_t dig_before, uint32_t dig_after)
-{
-  float a;
-  uint32_t d;
-  uint8_t leading_zero;
-
-  if (f == 0.0f)
-  {
-    buf[0] = '0';
-    buf[1] = '\0';
-    return;
-  }
-  if (f < 0)
-  {
-    *buf++ = '-';
-    f = -f;
-  }
-  a =  powf(10.0f, (float)dig_before);
-  if (f >= a)
-  {
-    buf[0] = '#';
-    buf[1] = '\0';
-    return;
-  }
-  leading_zero = 1;
-  while (dig_before)
-  {
-    a /= 10.0f;
-    d = (uint32_t)(f / a);
-    if (leading_zero && d == 0 && a >= 10.0f)
-      *buf++ = ' ';
-    else
-    {
-      leading_zero = 0;
-      *buf++ = '0' + d;
-      f -= d*a;
-    }
-    --dig_before;
-  }
-  if (!dig_after)
-  {
-    *buf++ = '\0';
-    return;
-  }
-  *buf++ = '.';
-  do
-  {
-    f *= 10.0f;
-    d = (uint32_t)f;
-    *buf++ = '0' + d;
-    f -= (float)d;
-    --dig_after;
-  } while (dig_after);
-  *buf++ = '\0';
-}
-
-
- __attribute__ ((unused))
-static void
-println_float(float f, uint32_t dig_before, uint32_t dig_after)
-{
-  char buf[21];
-  char *p = buf;
-
-  float_to_str(p, f, dig_before, dig_after);
-  while (*p)
-    ++p;
-  *p++ = '\r';
-  *p++ = '\n';
-  *p = '\0';
-  serial_output_str(buf);
+  ROM_GPIOPinWrite(GPIO_PORTA_BASE, GPIO_PIN_7, 0);
 }
 
 
@@ -924,7 +808,27 @@ latch_data_to_tlcs(void)
 /* nRF24L01+ code for receiving video frames wirelessly. */
 
 static void
-config_nrf_ssi_gpio(void)
+config_spi_nrf(void)
+{
+  /*
+    Configure the SPI for correct mode to read from nRF24L01+.
+
+    We need CLK inactive low, so SPO=0.
+    We need to setup and sample on the leading, rising CLK edge, so SPH=0.
+
+    The datasheet says up to 10MHz SPI is possible, depending on load
+    capacitance. Let's go with a slightly cautious 8MHz, which should be
+    aplenty.
+  */
+  ROM_SSIDisable(SSI1_BASE);
+  ROM_SSIConfigSetExpClk(SSI1_BASE, ROM_SysCtlClockGet(), SSI_FRF_MOTO_MODE_0,
+                         SSI_MODE_MASTER, 8000000, 8);
+  ROM_SSIEnable(SSI1_BASE);
+}
+
+
+static void
+config_nrf_sd_ssi_gpio(void)
 {
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_SSI1);
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOF);
@@ -949,20 +853,17 @@ config_nrf_ssi_gpio(void)
   ROM_SysCtlPeripheralEnable(SYSCTL_PERIPH_GPIOB);
   ROM_GPIOPinTypeGPIOInput(GPIO_PORTB_BASE, GPIO_PIN_0);
 
-  /*
-    Configure the SPI for correct mode to read from nRF24L01+.
+  /* The SPI is shared with SD card, let's configure its IO as well. */
+  /* SD-card CS pin, high initially */
+  ROM_GPIOPinTypeGPIOOutput(SD_CS_BASE, SD_CS_PIN);
+  ROM_GPIOPinWrite(SD_CS_BASE, SD_CS_PIN, SD_CS_PIN);
+  /* SD Card detect pin as input. */
+  ROM_GPIOPinTypeGPIOInput(SD_CD_BASE, SD_CD_PIN);
+  /* Need a pull-up on the SD card detect pin. */
+  ROM_GPIOPadConfigSet(SD_CD_BASE, SD_CD_PIN,
+                       GPIO_STRENGTH_2MA, GPIO_PIN_TYPE_OD_WPU);
 
-    We need CLK inactive low, so SPO=0.
-    We need to setup and sample on the leading, rising CLK edge, so SPH=0.
-
-    The datasheet says up to 10MHz SPI is possible, depending on load
-    capacitance. Let's go with a slightly cautious 8MHz, which should be
-    aplenty.
-  */
-  ROM_SSIDisable(SSI1_BASE);
-  ROM_SSIConfigSetExpClk(SSI1_BASE, ROM_SysCtlClockGet(), SSI_FRF_MOTO_MODE_0,
-                         SSI_MODE_MASTER, 8000000, 8);
-  ROM_SSIEnable(SSI1_BASE);
+  config_spi_nrf();
 
   /*
     Tiva Errata says that SSI0 and SSI1 cannot use uDMA at the same time.
@@ -1666,6 +1567,8 @@ IntHandlerSSI1(void)
 {
   if (receive_multi_running)
     nrf_idle = nrf_async_receive_multi_cont(&receive_multi_state, 1);
+  else
+    (*sd_ssi1_handler)();
 }
 
 
@@ -1714,7 +1617,10 @@ check_nrf_sd(void)
       if (nrf_idle)
       {
         if ((nrf_last_activity - now) >= nrf_idle_timeout_value)
+        {
           receive_multi_running = 0;
+          sd_config_spi();
+        }
       }
       ROM_IntMasterEnable();
     }
@@ -1726,6 +1632,7 @@ check_nrf_sd(void)
       nrf_idle_timeout_value = NRF_CMD_TIMEOUT;
       nrf_irq_pending = 0;
       receive_multi_running = 1;
+      config_spi_nrf();
       /*
         Re-enable and re-trigger the nRF24L01+ interrupt that was postponed
         while the SPI was in use by the SD card.
@@ -1982,12 +1889,14 @@ int main()
   uint32_t last_frame_time = 0;
   uint32_t last_time;
   int res;
+  uint32_t framerate_wait;
 
   /* Use the full 80MHz system clock. */
   ROM_SysCtlClockSet(SYSCTL_SYSDIV_2_5 | SYSCTL_USE_PLL |
                      SYSCTL_OSC_MAIN | SYSCTL_XTAL_16MHZ);
   ROM_FPULazyStackingEnable();
 
+  config_led();
   generate_test_image();
 
   /* Setup GPIO to read HALL sensor. */
@@ -2003,6 +1912,8 @@ int main()
   ROM_UARTConfigSetExpClk(UART0_BASE, (ROM_SysCtlClockGet()), 500000,
                       (UART_CONFIG_WLEN_8 | UART_CONFIG_STOP_ONE |
                        UART_CONFIG_PAR_NONE));
+
+  sd_setup_systick();
 
   /* Read the config from eeprom. */
   serial_output_str("Serial configured, now reading config from EEPROM...\r\n");
@@ -2068,7 +1979,7 @@ int main()
   init_udma_for_tlc();
 
   /* Setup for receiving data on nRF24L01+. */
-  config_nrf_ssi_gpio();
+  config_nrf_sd_ssi_gpio();
   config_nrf_interrupts();
   /* Wait another 20 millisec (nRF24L01+ datasheet says min 4.5 millisec). */
   ROM_SysCtlDelay(MCU_HZ/3/1000*20);
@@ -2115,13 +2026,25 @@ int main()
     p = uint32_tostring(p, last_frame_time);
 
     frame_start = hall_timer_value();
-    gen_anim_frame(0 /* text_buf */);
+    if (sd_card_present())
+    {
+      uint32_t frame_size;
+      uint8_t *frame;
+      frame = get_anim_frame(&frame_size);
+      sd_load_frame(frame, frame_size);
+      framerate_wait = MCU_HZ/25;
+    }
+    else
+    {
+      gen_anim_frame(0 /* text_buf */);
+      framerate_wait = MCU_HZ/50;
+    }
     last_frame_time = frame_start - hall_timer_value();
 
     /* Constrain the frame rate. */
     do {
       now_time = hall_timer_value();
-    } while (last_time - now_time < MCU_HZ/50);
+    } while (last_time - now_time < framerate_wait);
     next_anim_frame();
     last_time = now_time;
   }
