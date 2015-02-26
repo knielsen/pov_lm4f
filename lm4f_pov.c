@@ -2032,7 +2032,7 @@ int main()
       uint8_t *frame;
       frame = get_anim_frame(&frame_size);
       sd_load_frame(frame, frame_size);
-      framerate_wait = MCU_HZ/25;
+      framerate_wait = MCU_HZ/30;
     }
     else
     {

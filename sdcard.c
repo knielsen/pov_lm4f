@@ -22,6 +22,7 @@
 #include "sdcard.h"
 #include "serial_dbg.h"
 #include "ev_fat.h"
+#include "pov_config.h"
 
 
 /*
@@ -655,7 +656,8 @@ sd_open_file(void)
   fs_stat.state = 0;
   do
   {
-    res = ev_file_get_first_block("POVFAN-R.000", &fs_stat);
+    res = ev_file_get_first_block((bm_mode ? "POVFAN-T.000" : "POVFAN-R.000"),
+                                  &fs_stat);
     if (res == EV_FILE_ST_STREAM_BYTES)
     {
       uint8_t err = sd_read_block(fs_stat.st_stream_bytes.sec, sd_buffer);
